@@ -1,0 +1,3 @@
+# Preserve the tested HDL/framework bytes across Windows and Unix checkouts.
+# Do not silently normalize the mixed upstream source line endings on commit.
+* -text
