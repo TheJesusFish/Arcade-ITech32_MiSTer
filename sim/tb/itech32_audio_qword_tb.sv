@@ -3,6 +3,7 @@
 // Scaffold through DDR model is copied from the pinned DDR-memory fixture.
 // Only this module name differs in that 409-line prefix.
 module itech32_audio_qword_tb;
+	localparam integer SCAN_BURST_WORDS = 97;
 	localparam logic [4:0] MEM_ST_IDLE       = 5'd0;
 	localparam logic [4:0] MEM_ST_DISPATCH   = 5'd1;
 	localparam logic [4:0] MEM_ST_ISSUE      = 5'd2;
@@ -151,7 +152,9 @@ module itech32_audio_qword_tb;
 			dut.download_ended, rom_loaded, model_active);
 	end
 
-	itech32_ddr_memory #(.VRAM_CLEAR_LINES(8)) dut (
+	itech32_ddr_memory #(
+		.VRAM_CLEAR_LINES(8), .SCAN_BURST_WORDS(SCAN_BURST_WORDS)
+	) dut (
 		.clk(clk), .reset(reset), .timekill_mode(timekill_mode), .bloodstorm_mode(1'b0),
 		.quiesce(quiesce),
 		.ioctl_download(ioctl_download), .ioctl_wr(ioctl_wr),
@@ -351,7 +354,8 @@ module itech32_audio_qword_tb;
 
 			if (!model_active && model_armed && !DDRAM_BUSY && (DDRAM_RD || DDRAM_WE)) begin
 				assert ((DDRAM_RD && (DDRAM_BURSTCNT == 8'd1 ||
-					DDRAM_BURSTCNT == 8'd16 || DDRAM_BURSTCNT == 8'd128)) ||
+					DDRAM_BURSTCNT == 8'd16 ||
+					DDRAM_BURSTCNT == 8'(SCAN_BURST_WORDS))) ||
 					(DDRAM_WE && DDRAM_BURSTCNT >= 8'd1 &&
 					DDRAM_BURSTCNT <= 8'd16))
 					else $fatal(1, "unexpected DDR burst count %0d", DDRAM_BURSTCNT);
@@ -627,17 +631,21 @@ module itech32_audio_qword_tb;
                 assert(scan_req && !scan_active)
                     else $fatal(1,"AUDIO_SCAN_DUPLICATE_ACCEPT");
                 scan_req<=0;scan_active<=1;scan_accept_age<=scan_age;
-                for(integer b=0;b<1024;b++)scan_expected[b]=expected_vram[512+b];
+                for(integer b=0;b<SCAN_BURST_WORDS*8;b++)
+                    scan_expected[b]=expected_vram[512+b];
             end
             if(scan_data_valid) begin
-                assert(scan_active && scan_beats<128)
+                assert(scan_active && scan_beats<SCAN_BURST_WORDS)
                     else $fatal(1,"AUDIO_SCAN_UNOWNED_BEAT");
                 for(integer b=0;b<8;b++)wanted[b*8+:8]=scan_expected[scan_beats*8+b];
-                assert(scan_rdata==wanted && scan_last==(scan_beats==127))
+                assert(scan_rdata==wanted &&
+                       scan_last==(scan_beats==SCAN_BURST_WORDS-1))
                     else $fatal(1,"AUDIO_SCAN_DATA beat=%0d got=%x expected=%x",
                                 scan_beats,scan_rdata,wanted);
                 scan_beats<=scan_beats+1;
-                if(scan_beats==127)begin scan_active<=0;scan_done<=1;end
+                if(scan_beats==SCAN_BURST_WORDS-1) begin
+                    scan_active<=0;scan_done<=1;
+                end
             end
         end
     end

@@ -16,7 +16,8 @@ module itech32_ddr_memory #(
 	parameter logic [27:0] SAMPLE3_BASE  = 28'h2a0_0000,
 	parameter logic [27:0] VRAM_BASE     = 28'h2e0_0000,
 	parameter integer      VRAM_CLEAR_LINES = 262144,
-	parameter bit          VRAM_WRITE_COMBINE = 1'b1
+	parameter bit          VRAM_WRITE_COMBINE = 1'b1,
+	parameter integer      SCAN_BURST_WORDS = 97
 ) (
 	input  logic        clk,
 	input  logic        reset,
@@ -26,6 +27,7 @@ module itech32_ddr_memory #(
 	// new commands before that terminator locks, but let accepted commands
 	// drain so the persistent loader/cache state survives a warm reset.
 	input  logic        quiesce,
+	output logic        quiesce_ack,
 
 	// WIDE=1 hps_io stream. If Main_MiSTer performs a fast DDR download,
 	// ioctl_download toggles without ioctl_wr and the data is already at
@@ -90,8 +92,8 @@ module itech32_ddr_memory #(
 	output logic        vram_qwrite_ack,
 
 	// Deadline channel for scanout. One accepted request reads the complete
-	// selected 512-pixel plane row as a 128-beat, 64-bit DDR burst. Returned beats are
-	// consecutive and cannot be backpressured by the consumer.
+	// qword-aligned active window as a SCAN_BURST_WORDS-beat DDR burst. Returned
+	// beats are consecutive and cannot be backpressured by the consumer.
 	input  logic        scan_req,
 	input  logic [19:0] scan_addr,
 	output logic        scan_accept,
@@ -110,7 +112,6 @@ module itech32_ddr_memory #(
 	output logic        DDRAM_RD,
 	output logic        DDRAM_WE
 );
-
 	localparam logic [2:0] CLIENT_MAIN   = 3'd0;
 	localparam logic [2:0] CLIENT_GROM   = 3'd1;
 	localparam logic [2:0] CLIENT_SOUND  = 3'd2;
@@ -178,6 +179,10 @@ module itech32_ddr_memory #(
 	main_front_state_t main_front_state;
 	grom_front_state_t grom_front_state;
 	sound_front_state_t sound_front_state;
+	// A deliberate carrier change may stop DDRAM_CLK only after this service
+	// has retired or cancelled every physical transaction. Retained write-window
+	// data is local state and is safe to resume after the clock returns.
+	assign quiesce_ack = quiesce && state == ST_IDLE && !DDRAM_RD && !DDRAM_WE;
 	// The 6809 alternates fixed and banked program regions whose physical lines
 	// can share a low-nine-qword index. Two registered ways retain one line from
 	// each region without changing the three-edge local hit contract. Each way is
@@ -379,7 +384,7 @@ module itech32_ddr_memory #(
 	//   S0: scanout holds scan_req/scan_addr until scan_accept.
 	//   S1: ST_IDLE captures scan_addr_q and enters ST_SCAN_ISSUE.
 	//   S2: ST_SCAN_ISSUE either flushes a conflicting retained write window or
-	//       launches the 128-beat read and pulses scan_accept.
+	//       launches the configured active-window read and pulses scan_accept.
 	// The no-conflict request-to-DDR latency and accept timing are unchanged.
 	// Only the conflict decision moves behind the existing address register, so
 	// scanout coordinates no longer cross the scheduler into DDRAM_DIN in one
@@ -627,10 +632,10 @@ module itech32_ddr_memory #(
 		live_vram_block_addr = {live_vram_line_addr[27:7], 7'b000_0000};
 		live_vram_buffer_index = live_vram_line_addr[6:3];
 		live_scan_row_index = VRAM_BASE[27:10] + {7'd0, scan_addr_q[19:9]};
-		// Scanout issues a 1024-byte linear burst starting at a qword-aligned
-		// programmable X origin. A nonzero in-row origin spans this row and the
-		// immediately following row, so either retained write window must become
-		// durable before the scan command can be accepted.
+		// Scanout issues a qword-aligned linear burst. Keep the deliberately
+		// conservative two-row conflict fence: some programmed origins cross the
+		// logical row, and flushing on every nonzero origin cannot expose stale
+		// retained writes even though the shortened active window may end earlier.
 		scan_write_buffer_conflict =
 			live_scan_row_index == vram_write_buffer_base[27:10] ||
 			(scan_addr_q[8:0] != 9'd0 &&
@@ -655,7 +660,7 @@ module itech32_ddr_memory #(
 
 		DDRAM_CLK = clk;
 		DDRAM_BURSTCNT = (state == ST_SCAN_ISSUE || state == ST_SCAN_WAIT)
-			? 8'd128 : ((state == ST_GROM_BURST_ISSUE ||
+			? 8'(SCAN_BURST_WORDS) : ((state == ST_GROM_BURST_ISSUE ||
 				state == ST_GROM_BURST_WAIT ||
 				state == ST_MAIN_BURST_ISSUE ||
 				state == ST_MAIN_BURST_WAIT) ? 8'd16 :
@@ -1269,7 +1274,7 @@ module itech32_ddr_memory #(
 						DDRAM_WE <= 1'b1;
 						state <= ST_VRAM_BURST_WRITE;
 					end else if (scan_req) begin
-						// Scanout gets a dedicated burst rather than 128 random reads.
+						// Scanout gets a dedicated burst rather than random reads.
 						// Capture the qword-aligned linear-window address; the request remains
 						// asserted until the bridge accepts the burst command.
 						scan_addr_q <= scan_addr;
@@ -1556,7 +1561,7 @@ module itech32_ddr_memory #(
 					end else if (VRAM_WRITE_COMBINE &&
 						vram_write_buffer_valid && scan_write_buffer_conflict) begin
 						// The scan address is already registered at this boundary. If its
-						// 1024-byte linear window overlaps the retained write window, make
+						// Linear scan window overlaps the retained write window, so make
 						// that window durable before accepting the scan request. Scanout
 						// continues to hold the request, so ST_IDLE will recapture it after
 						// this complete idempotent burst retires.
@@ -1604,9 +1609,9 @@ module itech32_ddr_memory #(
 							download_ended)) begin
 							scan_rdata <= DDRAM_DOUT;
 							scan_data_valid <= 1'b1;
-							scan_last <= scan_beat == 7'd127;
+								scan_last <= scan_beat == 7'(SCAN_BURST_WORDS - 1);
 						end
-						if (scan_beat == 7'd127) begin
+						if (scan_beat == 7'(SCAN_BURST_WORDS - 1)) begin
 							scan_beat <= 7'd0;
 							scan_discard <= 1'b0;
 							state <= ST_IDLE;
@@ -2129,8 +2134,8 @@ module itech32_ddr_memory #(
 				else $fatal(1, "scanline DDR request is not qword aligned");
 		end
 		if (!reset && (state == ST_SCAN_ISSUE || state == ST_SCAN_WAIT)) begin
-			assert (DDRAM_BURSTCNT == 8'd128)
-				else $fatal(1, "scanline DDR request lost its 128-beat burst count");
+			assert (DDRAM_BURSTCNT == 8'(SCAN_BURST_WORDS))
+				else $fatal(1, "scanline DDR request lost its configured burst count");
 		end
 		if (!reset && (state == ST_GROM_BURST_ISSUE ||
 			state == ST_GROM_BURST_WAIT || state == ST_MAIN_BURST_ISSUE ||

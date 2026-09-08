@@ -1,6 +1,7 @@
 `timescale 1ns/1ps
 
 module itech32_ddr_memory_tb;
+	localparam integer SCAN_BURST_WORDS = 97;
 	localparam logic [4:0] MEM_ST_IDLE       = 5'd0;
 	localparam logic [4:0] MEM_ST_DISPATCH   = 5'd1;
 	localparam logic [4:0] MEM_ST_ISSUE      = 5'd2;
@@ -21,6 +22,7 @@ module itech32_ddr_memory_tb;
 	logic reset = 1'b1;
 	logic timekill_mode = 1'b0;
 	logic quiesce = 1'b0;
+	logic quiesce_ack;
 	logic framework_reset = 1'b0;
 	logic ioctl_download = 1'b0;
 	logic ioctl_wr = 1'b0;
@@ -152,7 +154,7 @@ module itech32_ddr_memory_tb;
 
 	itech32_ddr_memory #(.VRAM_CLEAR_LINES(8)) dut (
 		.clk(clk), .reset(reset), .timekill_mode(timekill_mode), .bloodstorm_mode(1'b0),
-		.quiesce(quiesce),
+		.quiesce(quiesce), .quiesce_ack(quiesce_ack),
 		.ioctl_download(ioctl_download), .ioctl_wr(ioctl_wr),
 		.ioctl_index(ioctl_index), .ioctl_addr(ioctl_addr),
 		.ioctl_data(ioctl_data), .ioctl_wait(ioctl_wait),
@@ -350,7 +352,8 @@ module itech32_ddr_memory_tb;
 
 			if (!model_active && model_armed && !DDRAM_BUSY && (DDRAM_RD || DDRAM_WE)) begin
 				assert ((DDRAM_RD && (DDRAM_BURSTCNT == 8'd1 ||
-					DDRAM_BURSTCNT == 8'd16 || DDRAM_BURSTCNT == 8'd128)) ||
+					DDRAM_BURSTCNT == 8'd16 ||
+					DDRAM_BURSTCNT == 8'(SCAN_BURST_WORDS))) ||
 					(DDRAM_WE && DDRAM_BURSTCNT >= 8'd1 &&
 					DDRAM_BURSTCNT <= 8'd16))
 					else $fatal(1, "unexpected DDR burst count %0d", DDRAM_BURSTCNT);
@@ -1092,7 +1095,7 @@ module itech32_ddr_memory_tb;
 
 			beat = 0;
 			timeout = 0;
-			while (beat < 128 && timeout < 2000) begin
+			while (beat < SCAN_BURST_WORDS && timeout < 2000) begin
 				@(posedge clk); #1;
 				if (vram_ack)
 					ack_count = ack_count + 1;
@@ -1100,13 +1103,14 @@ module itech32_ddr_memory_tb;
 					else $fatal(1, "scan replayed the staged dispatch commit");
 				if (scan_data_valid) begin
 					assert (scan_rdata == model_line(scan_base + 28'(beat * 8)) &&
-						scan_last == (beat == 127))
+						scan_last == (beat == SCAN_BURST_WORDS - 1))
 						else $fatal(1, "same-row dispatch scan mismatch at beat %0d", beat);
 					beat = beat + 1;
 				end
 				timeout = timeout + 1;
 			end
-			assert (beat == 128 && ack_count == 1 && dispatch_commit_count == 1)
+			assert (beat == SCAN_BURST_WORDS && ack_count == 1 &&
+				dispatch_commit_count == 1)
 				else $fatal(1, "dispatch/scan completion counts ack=%0d commit=%0d beat=%0d",
 					ack_count, dispatch_commit_count, beat);
 			dispatch_commit_watch = 1'b0;
@@ -1123,9 +1127,9 @@ module itech32_ddr_memory_tb;
 		logic [27:0] scan_base;
 		logic [27:0] write_byte_addr;
 		begin
-			// A 512-word scan beginning at row 1, x=384 covers the tail of
-			// row 1 and the first 384 pixels of row 2. Retain a write in row
-			// 2 and prove the linear scan cannot pass it.
+			// The aligned active-window scan beginning at row 1, x=384 covers
+			// the tail of row 1 and part of row 2. Retain a write in row 2 and
+			// prove the linear scan cannot pass it.
 			vram_write(WRITE_ADDRESS, WRITE_VALUE, 2'b11);
 			write_byte_addr = VRAM_BASE + {7'd0, WRITE_ADDRESS, 1'b0};
 			assert (dut.vram_write_buffer_valid &&
@@ -1152,17 +1156,18 @@ module itech32_ddr_memory_tb;
 			scan_req = 1'b0;
 			beat = 0;
 			timeout = 0;
-			while (beat < 128 && timeout < 2000) begin
+			while (beat < SCAN_BURST_WORDS && timeout < 2000) begin
 				@(posedge clk); #1;
 				if (scan_data_valid) begin
 					assert (scan_rdata == model_line(scan_base + 28'(beat * 8)) &&
-						scan_last == (beat == 127))
+						scan_last == (beat == SCAN_BURST_WORDS - 1))
 						else $fatal(1, "linear cross-row scan mismatch at beat %0d", beat);
 					beat = beat + 1;
 				end
 				timeout = timeout + 1;
 			end
-			assert (beat == 128 && ddr_transactions == transaction_start + 2)
+			assert (beat == SCAN_BURST_WORDS &&
+				ddr_transactions == transaction_start + 2)
 				else $fatal(1, "linear scan used wrong write/read transaction count");
 		end
 	endtask
@@ -1363,9 +1368,9 @@ module itech32_ddr_memory_tb;
 			$finish;
 		end
 
-		// A scanline is one accepted DDR command followed by exactly 128
-		// consecutive qwords. This is the hardware-critical path: issuing 128
-		// independent reads cannot meet SFTM's 8 MHz raster-line deadline.
+		// A scanline is one accepted DDR command followed by the exact aligned
+		// active-window qword count. Independent reads cannot meet SFTM's 8 MHz
+		// raster-line deadline.
 		transaction_snapshot = ddr_transactions;
 		scan_addr = 19'd0;
 		scan_req = 1'b1;
@@ -1374,7 +1379,7 @@ module itech32_ddr_memory_tb;
 		scan_req = 1'b0;
 		scan_beat_count = 0;
 		scan_previous_valid = 1'b0;
-		while (scan_beat_count < 128) begin
+		while (scan_beat_count < SCAN_BURST_WORDS) begin
 			@(negedge clk);
 			if (scan_data_valid) begin
 				if (scan_beat_count != 0)
@@ -1383,7 +1388,7 @@ module itech32_ddr_memory_tb;
 							scan_beat_count - 1);
 				assert (scan_rdata == model_line(VRAM_BASE + 28'(scan_beat_count * 8)))
 					else $fatal(1, "scan burst beat %0d payload mismatch", scan_beat_count);
-				assert (scan_last == (scan_beat_count == 127))
+				assert (scan_last == (scan_beat_count == SCAN_BURST_WORDS - 1))
 					else $fatal(1, "scan burst last mismatch at beat %0d", scan_beat_count);
 				scan_beat_count = scan_beat_count + 1;
 			end
@@ -1409,10 +1414,14 @@ module itech32_ddr_memory_tb;
 				scan_beat_count = scan_beat_count + 1;
 		end
 		quiesce = 1'b1;
+		assert (!quiesce_ack)
+			else $fatal(1, "quiesce acknowledged before accepted scan burst drained");
 		while (model_active) begin
 			@(negedge clk);
 			assert (!scan_data_valid && !scan_last)
 				else $fatal(1, "quiesced scan burst leaked a response beat");
+			assert (!quiesce_ack)
+				else $fatal(1, "quiesce acknowledged while DDR burst remained active");
 		end
 		repeat (3) begin
 			@(negedge clk);
@@ -1421,7 +1430,12 @@ module itech32_ddr_memory_tb;
 		end
 		assert (ddr_transactions == transaction_snapshot + 1)
 			else $fatal(1, "quiesced scan burst issued more than one command");
+		assert (quiesce_ack && !core_DDRAM_RD && !core_DDRAM_WE)
+			else $fatal(1, "DDR service did not acknowledge its drained quiescent state");
 		quiesce = 1'b0;
+		#1;
+		assert (!quiesce_ack)
+			else $fatal(1, "quiesce acknowledgement remained set after release");
 
 		low_memory[16'h0120] = 8'hde;
 		low_memory[16'h0121] = 8'had;

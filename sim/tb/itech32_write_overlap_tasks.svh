@@ -47,17 +47,19 @@ task automatic overlap_scan(input logic [19:0] address);
         assert(scan_accept) else $fatal(1,"overlap scan timeout");
         overlap_score();
         @(negedge clk);scan_req=0;beat=0;timeout=0;
-        while(beat<128 && timeout<4000) begin
+        while(beat<SCAN_BURST_WORDS && timeout<4000) begin
             @(posedge clk);#1;timeout++;
             if(scan_data_valid) begin
                 for(integer b=0;b<8;b++)
                     expected_line[b*8+:8]=overlap_expected[integer'(address)*2+beat*8+b];
-                assert(scan_rdata==expected_line && scan_last==(beat==127))
+                assert(scan_rdata==expected_line &&
+                       scan_last==(beat==SCAN_BURST_WORDS-1))
                     else $fatal(1,"overlap scan data mismatch beat=%0d",beat);
                 beat++;
             end
         end
-        assert(beat==128) else $fatal(1,"overlap scan missing return beats");
+        assert(beat==SCAN_BURST_WORDS)
+            else $fatal(1,"overlap scan missing return beats");
         repeat(3) @(negedge clk);
     end
 endtask

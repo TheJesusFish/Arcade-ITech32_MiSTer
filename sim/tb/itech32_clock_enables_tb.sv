@@ -31,6 +31,7 @@ module itech32_clock_enables_tb;
 
 	itech32_clock_enables #(.CLK_HZ(FABRIC_HZ), .PIXEL_DIV(PIXEL_DIV)) dut (
 		.clk(clk), .reset(reset),
+		.alternate_clock(1'b0),
 		.ce_cpu_25m(ce25), .ce_ensoniq_16m(ce16),
 		.ce_cpu_12m(ce12),
 		.ce_pixel(ce_pixel), .ce_sound_8m(ce_sound8), .ce_sound_2m(ce2)
@@ -104,7 +105,7 @@ module itech32_clock_enables_tb;
 				sound_eq_gap_min, sound_eq_gap_max);
 		if ((SFTM_PIXEL_HZ * 1000 / (SFTM_H_TOTAL * SFTM_V_TOTAL)) != 54_750)
 			$fatal(1, "SFTM approximately 54.75 Hz geometry drifted");
-		$display("PASS 47.727273MHz clock enables: cpu25=%0d cpu12=%0d es=%0d pixel=%0d sound8=%0d sound2=%0d pixel-gap=%0d/%0d sound-EQ-gap=%0d/%0d refresh=54.751Hz totals=%0dx%0d",
+		$display("PASS 47.727273MHz clock enables: cpu25=%0d cpu12=%0d es=%0d pixel=%0d sound8=%0d sound2=%0d pixel-gap=%0d/%0d sound-EQ-gap=%0d/%0d refresh=54.750Hz totals=%0dx%0d",
 			count25, count12, count16, count_pixel, count_sound8, count2,
 			pixel_gap_min, pixel_gap_max, sound_eq_gap_min, sound_eq_gap_max,
 			SFTM_H_TOTAL, SFTM_V_TOTAL);

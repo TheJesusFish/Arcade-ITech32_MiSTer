@@ -1,4 +1,20 @@
-# MAME NVRAM oracle
+# MAME reference probes
+
+## SFTM video timing
+
+Run `sftm_video_timing_trace.lua` through MAME's `-autoboot_script` option to
+record the stable IT42 timing tuple written by the game. The probe watches the
+68EC020 video-register aperture, includes HSYNC and VSYNC in addition to the six
+values printed by MAME's `LOG_SCREEN`, and de-duplicates initialization writes
+at frame boundaries. Set `ITECH32_TIMING_TRACE` to an output path outside the
+repository. A long `-bench` run can cover complete attract loops without host
+input or real-time throttling.
+
+This establishes software-programmed counts and whether they change at runtime;
+it does not measure the physical PCB pixel clock. Generated logs must not be
+added to this repository.
+
+## NVRAM oracle
 
 These ROM-free Lua scripts reproduce the Street Fighter: The Movie v1.10
 first-boot NVRAM sequence using MAME's emulated cabinet inputs. They do not use

@@ -29,7 +29,7 @@ endmodule
 
 module itech32_scanout #(
 	parameter integer LINE_PIXELS = 384,
-	parameter integer ROW_WORDS = 128
+	parameter integer ROW_WORDS = (LINE_PIXELS + 6) / 4
 ) (
 	input  logic        clk,
 	input  logic        reset,
@@ -51,13 +51,13 @@ module itech32_scanout #(
 	input  logic [8:0]  display_xscroll2,
 	input  logic [9:0]  display_yscroll2,
 
-	// One request fetches a 512-pixel linear window, qword-aligned at the
-	// programmed source origin, as 128 consecutive 64-bit DDR beats. MAME masks
-	// only the first source coordinate and then walks linearly, so a 384-pixel
-	// SFTM line beginning at x=384 legitimately continues into the next source
-	// row. The request remains asserted until accepted; returned data beats
-	// cannot be backpressured and therefore write directly into the inactive
-	// 128x64 line RAM.
+	// One request fetches the complete active linear window, qword-aligned at the
+	// programmed source origin. MAME masks only the first source coordinate and
+	// then walks linearly, so a 384-pixel line beginning near the end of a source
+	// row legitimately continues into the next row. The low two origin bits can
+	// add three pixels, making 97 qwords the exact worst case. The request remains
+	// asserted until accepted; returned data beats cannot be backpressured and
+	// therefore write directly into the inactive line RAM.
 	output logic        fb_req,
 	output logic [19:0] fb_addr,
 	input  logic        fb_accept,

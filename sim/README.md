@@ -66,7 +66,7 @@ explicit `*_PASS` assertion message and zero simulation errors.
 
 | Tests | Scope |
 | --- | --- |
-| `clocks`, `crt-adjust`, `video-timing` | Clock enables, menu offset decode, programmable raster timing |
+| `clocks`, `clocks-mame`, `clock-mode`, `crt-adjust`, `video-timing` | Board/MAME clock enables, DDR-quiesced and loader-retaining mode adoption, menu offset decode, and programmable raster timing |
 | `game-selector` | Three board selectors plus unsupported-selector SFTM fallback |
 | `nvram-save-request`, `nvram-io`, `nvram-memory`, `nvram-transfer` | One save per dirty OSD-opening edge, MiSTer upload/dirty protocol, all three backing stores, bounds and byte lanes, plus an exact WIDE=1 `hps_io` save/restore round trip |
 | `inputs`, `blood-inputs` | Input and DIP mapping |

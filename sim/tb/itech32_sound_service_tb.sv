@@ -4,6 +4,7 @@
 // The cycle bounds below describe this finite-latency model, not the DDR device
 // or the ES5506's end-to-end sample deadline.
 module itech32_sound_service_tb;
+    localparam integer SCAN_BURST_WORDS = 97;
     localparam logic [27:0] SOUND_BASE = 28'h040_0000;
     localparam logic [27:0] SAMPLE_BASE = 28'h260_0000;
     localparam logic [27:0] VRAM_BASE = 28'h2e0_0000;
@@ -40,7 +41,9 @@ module itech32_sound_service_tb;
     logic [28:0] core_addr;
     logic [63:0] core_din, core_dout;
 
-    itech32_ddr_memory #(.VRAM_CLEAR_LINES(8)) dut (
+    itech32_ddr_memory #(
+        .VRAM_CLEAR_LINES(8), .SCAN_BURST_WORDS(SCAN_BURST_WORDS)
+    ) dut (
         .clk(clk), .reset(reset), .timekill_mode(1'b0), .bloodstorm_mode(1'b0),
         .quiesce(quiesce), .ioctl_download(ioctl_download), .ioctl_wr(ioctl_wr),
         .ioctl_index(16'd0), .ioctl_addr(ioctl_addr), .ioctl_data(ioctl_data),
@@ -163,7 +166,7 @@ module itech32_sound_service_tb;
                         sound_reads <= sound_reads + 1;
                     if (logical_address >= SAMPLE_BASE && logical_address < SAMPLE_BASE + 28'h040_0000)
                         sample_reads <= sample_reads + 1;
-                    if (burst == 128) scans <= scans + 1;
+                    if (burst == SCAN_BURST_WORDS) scans <= scans + 1;
                 end else begin store_write(logical_address); writes <= writes + 1; end
             end
         end
@@ -174,7 +177,7 @@ module itech32_sound_service_tb;
         if (!reset && scan_valid) begin
             assert (scan_data == pattern_line(VRAM_BASE + 28'(scan_beats*8)))
                 else $fatal(1, "scan data changed at beat %0d", scan_beats);
-            assert (scan_last == (scan_beats == 127))
+            assert (scan_last == (scan_beats == SCAN_BURST_WORDS-1))
                 else $fatal(1, "scan last/order mismatch");
             scan_beats <= scan_beats + 1;
         end
@@ -367,7 +370,8 @@ module itech32_sound_service_tb;
         // A genuine, accepted scan burst owns DDR while resident hits bypass it.
         @(negedge clk); hold_returns = 1; scan_req = 1;
         timeout = 0;
-        while (!(model_active && model_read && model_count == 128) && timeout < 500) begin
+        while (!(model_active && model_read &&
+                 model_count == SCAN_BURST_WORDS) && timeout < 500) begin
             @(negedge clk); timeout++;
         end
         assert (timeout < 500) else $fatal(1, "scan never reached DDR");
@@ -377,8 +381,11 @@ module itech32_sound_service_tb;
         assert (sound_reads == before_reads) else $fatal(1, "busy/scan hit issued DDR read");
         @(negedge clk); hold_returns = 0;
         timeout = 0;
-        while (scan_beats < 128 && timeout < 500) begin @(negedge clk); timeout++; end
-        assert (scan_beats == 128) else $fatal(1, "scan failed after SOUND hits");
+        while (scan_beats < SCAN_BURST_WORDS && timeout < 500) begin
+            @(negedge clk); timeout++;
+        end
+        assert (scan_beats == SCAN_BURST_WORDS)
+            else $fatal(1, "scan failed after SOUND hits");
 
 		// Populate two complete 512-qword cohorts with identical indices and
 		// distinct full tags, then revisit both edge bytes of both cohorts with no

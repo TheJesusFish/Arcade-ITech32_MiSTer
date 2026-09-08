@@ -1,5 +1,8 @@
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/itech32/itech32_rate_enable.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/itech32/itech32_clock_enables.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/itech32/itech32_clock_mode_control.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/itech32/itech32_mame_pll.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/itech32/itech32_transport_pll.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/itech32/itech32_game_selector.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/itech32/itech32_nvram_save_request.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/itech32/itech32_nvram_io.sv
@@ -35,3 +38,10 @@ set_global_assignment -name SYSTEMVERILOG_FILE rtl/memory/itech32_ddr_memory.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/itech32/itech32_core.sv
 set_global_assignment -name SDC_FILE Arcade-ITech32.sdc
 set_global_assignment -name SYSTEMVERILOG_FILE Arcade-ITech32.sv
+
+set_instance_assignment -name PLL_COMPENSATION_MODE DIRECT -to "*itech32_mame_pll:mame_pll|altera_pll:pll_i*|*"
+set_instance_assignment -name PLL_AUTO_RESET ON -to "*itech32_mame_pll:mame_pll|altera_pll:pll_i*|*"
+set_instance_assignment -name PLL_BANDWIDTH_PRESET AUTO -to "*itech32_mame_pll:mame_pll|altera_pll:pll_i*|*"
+set_instance_assignment -name PLL_COMPENSATION_MODE DIRECT -to "*itech32_transport_pll:transport_pll|altera_pll:pll_i*|*"
+set_instance_assignment -name PLL_AUTO_RESET ON -to "*itech32_transport_pll:transport_pll|altera_pll:pll_i*|*"
+set_instance_assignment -name PLL_BANDWIDTH_PRESET AUTO -to "*itech32_transport_pll:transport_pll|altera_pll:pll_i*|*"

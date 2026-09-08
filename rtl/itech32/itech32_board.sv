@@ -7,7 +7,7 @@
 
 module itech32_board #(
 	parameter integer LINE_PIXELS = 384,
-	parameter integer SCAN_ROW_WORDS = 128
+	parameter integer SCAN_ROW_WORDS = (LINE_PIXELS + 6) / 4
 ) (
 	input  logic        clk,
 	input  logic        reset,

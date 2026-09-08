@@ -12,6 +12,7 @@ module itech32_core #(
 	// forget that the ROM remains resident in DDR.
 	input  logic        memory_reset,
 	input  logic        memory_quiesce,
+	output logic        memory_quiesced,
 	input  logic        reset,
 
 	input  logic        ioctl_download,
@@ -26,6 +27,7 @@ module itech32_core #(
 
 	input  logic [11:0] joystick_0,
 	input  logic [11:0] joystick_1,
+	input  logic        mame_timing,
 
 	output logic        DDRAM_CLK,
 	input  logic        DDRAM_BUSY,
@@ -49,8 +51,14 @@ module itech32_core #(
 	output logic signed [15:0] audio_left,
 	output logic signed [15:0] audio_right,
 	output logic        audio_strobe,
-	output logic        core_active
+	output logic        core_active,
+	output logic        sftm_mode
 );
+	// The scan address is qword aligned, so a 384-pixel active line can consume
+	// at most 384 + 3 source pixels. Ninety-seven qwords cover that complete
+	// window without spending DDR service time on the unused tail of a 512-pixel
+	// framebuffer row.
+	localparam integer SCAN_ROW_WORDS = (LINE_PIXELS + 6) / 4;
 
 	logic ce_cpu_25m;
 	logic ce_cpu_12m;
@@ -66,6 +74,7 @@ module itech32_core #(
 	// MAME's separate v1.10/v1.11 init address made those sets hang on MiSTer.
 	wire [14:0] protection_address = 15'h7a6a;
 	wire rev1_mode = timekill_mode || bloodstorm_mode;
+	assign sftm_mode = !rev1_mode;
 	wire game_selector_write = ioctl_wr && ioctl_index == 16'h0001 &&
 		ioctl_addr == 27'd0;
 	logic nvram_host_access;
@@ -209,11 +218,15 @@ module itech32_core #(
 			dip_switches <= ioctl_data[7:0];
 	end
 
-	// One 6x-pixel carrier clocks the complete core and the stock MiSTer mixer.
-	// CE_PIXEL is an exact divide by six, giving direct video a fixed 3048-clock
-	// line instead of the former wandering 6131/6132-clock line.
-	itech32_clock_enables #(.CLK_HZ(47_727_273), .PIXEL_DIV(6)) clocks (
+	// One selected 6x-pixel carrier clocks the complete core and the stock
+	// MiSTer mixer. CE_PIXEL remains an exact divide by six in both modes,
+	// giving direct video a fixed 3048-carrier-clock line. CPU and sound rates
+	// retain their board frequencies when the 48 MHz MAME carrier is selected.
+	itech32_clock_enables #(
+		.CLK_HZ(47_727_273), .ALT_CLK_HZ(48_000_000), .PIXEL_DIV(6)
+	) clocks (
 		.clk(clk), .reset(platform_reset),
+		.alternate_clock(mame_timing),
 		.ce_cpu_25m(ce_cpu_25m), .ce_cpu_12m(ce_cpu_12m),
 		.ce_ensoniq_16m(ce_ensoniq_16m),
 		.ce_pixel(ce_pixel_board), .ce_sound_8m(ce_sound_8m),
@@ -235,7 +248,9 @@ module itech32_core #(
 		.input_p4(input_p4), .input_dips(input_dips), .input_extra(input_extra)
 	);
 
-	itech32_board #(.LINE_PIXELS(LINE_PIXELS)) board (
+	itech32_board #(
+		.LINE_PIXELS(LINE_PIXELS), .SCAN_ROW_WORDS(SCAN_ROW_WORDS)
+	) board (
 		.clk(clk), .reset(platform_reset),
 		.timekill_mode(timekill_mode),
 		.bloodstorm_mode(bloodstorm_mode),
@@ -314,9 +329,11 @@ module itech32_core #(
 
 	itech32_ddr_memory #(
 		.VRAM_CLEAR_LINES(VRAM_CLEAR_LINES),
-		.VRAM_WRITE_COMBINE(1'b1)
+		.VRAM_WRITE_COMBINE(1'b1),
+		.SCAN_BURST_WORDS(SCAN_ROW_WORDS)
 	) memory (
 		.clk(clk), .reset(memory_reset), .quiesce(memory_quiesce),
+		.quiesce_ack(memory_quiesced),
 		.timekill_mode(timekill_mode),
 		.bloodstorm_mode(bloodstorm_mode),
 		.ioctl_download(ioctl_download), .ioctl_wr(ioctl_wr),

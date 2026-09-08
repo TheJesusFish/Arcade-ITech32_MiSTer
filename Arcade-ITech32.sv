@@ -37,6 +37,7 @@ localparam CONF_STR = {
 	"ITech32;;",
 	"P1,Video Settings;",
 	"D0P1O[2:1],Aspect Ratio,Original,Full Screen,[ARC1],[ARC2];",
+	"H1P1O[36],MAME Timings,Off,On;",
 	"P1-;",
 	"P1O[29:24],CRT H Adjust,0,+1,+2,+3,+4,+5,+6,+7,+8,+9,+10,+11,+12,+13,+14,+15,+16,-16,-15,-14,-13,-12,-11,-10,-9,-8,-7,-6,-5,-4,-3,-2,-1;",
 	"P1O[35:30],CRT V Adjust,0,+1,+2,+3,+4,+5,+6,+7,+8,+9,+10,+11,+12,+13,+14,+15,+16,-16,-15,-14,-13,-12,-11,-10,-9,-8,-7,-6,-5,-4,-3,-2,-1;",
@@ -52,10 +53,18 @@ localparam CONF_STR = {
 	"V,v",`BUILD_DATE,";"
 };
 
+wire         clk_board;
+wire         clk_mame;
+wire         clk_source;
 wire         clk_sys;
-wire         pll_locked;
+wire         pll_board_locked;
+wire         pll_mame_locked;
+wire         pll_transport_locked;
+wire         source_plls_ready = pll_board_locked & pll_mame_locked;
 wire   [1:0] buttons;
 wire [127:0] status;
+wire         sftm_mode;
+wire  [15:0] status_menumask = {14'd0, ~sftm_mode, 1'b0};
 wire         forced_scandoubler;
 wire  [21:0] gamma_bus;
 wire         ioctl_download;
@@ -73,13 +82,66 @@ wire  [31:0] joystick_1;
 wire  [11:0] game_joystick_0;
 wire  [11:0] game_joystick_1;
 
-pll pll
+pll pll_board
 (
 	.refclk  (CLK_50M),
 	.rst     (1'b0),
-	.outclk_0(clk_sys),
-	.locked  (pll_locked)
+	.outclk_0(clk_board),
+	.locked  (pll_board_locked)
 );
+
+itech32_mame_pll mame_pll (
+	.refclk(CLK_50M),
+	.reset(1'b0),
+	.outclk(clk_mame),
+	.locked(pll_mame_locked)
+);
+
+wire mame_timing_request = sftm_mode && status[36];
+wire mame_timing_active;
+wire mode_switch_reset;
+wire transport_pll_reset;
+wire preserve_memory;
+wire memory_quiesced;
+itech32_clock_mode_control clock_mode_control (
+	.ref_clk(CLK_50M),
+	.pll_ready(source_plls_ready),
+	.transport_locked(pll_transport_locked),
+	.memory_quiesced(memory_quiesced),
+	.request_mame(mame_timing_request),
+	.select_mame(mame_timing_active),
+	.switch_reset(mode_switch_reset),
+	.transport_reset(transport_pll_reset),
+	.preserve_memory(preserve_memory)
+);
+
+// Both PLLs run continuously. The Cyclone V clock-control primitive is the
+// dedicated, non-fabric mux used to put exactly one carrier on the common core,
+// video, analog, Direct Video, and DDR clock domain.
+cyclonev_clkselect core_clock_switch (
+	.clkselect({1'b1, mame_timing_active}),
+	.inclk({clk_mame, clk_board, 2'b00}),
+	.outclk(clk_source)
+);
+
+// MiSTer's sys_top selects CLK_VIDEO again for Direct Video and analog output.
+// A Cyclone V clock-selector output cannot legally feed that second selector,
+// so a unity-ratio PLL provides the required direct-PLL framework boundary.
+itech32_transport_pll transport_pll (
+	.refclk(clk_source),
+	.reset(transport_pll_reset),
+	.outclk(clk_sys),
+	.locked(pll_transport_locked)
+);
+
+// The mode controller holds the selected domain in reset long enough for this
+// static control to settle before any rate accumulator or raster state runs.
+(* preserve, useioff = 0,
+   altera_attribute = {"-name SYNCHRONIZER_IDENTIFICATION FORCED_IF_ASYNCHRONOUS"} *)
+logic [1:0] mame_timing_pipe;
+always_ff @(posedge clk_sys)
+	mame_timing_pipe <= {mame_timing_pipe[0], mame_timing_active};
+wire mame_timing_selected = mame_timing_pipe[1];
 
 hps_io #(.CONF_STR(CONF_STR), .WIDE(1)) hps_io
 (
@@ -90,7 +152,8 @@ hps_io #(.CONF_STR(CONF_STR), .WIDE(1)) hps_io
 	.forced_scandoubler(forced_scandoubler),
 	.buttons           (buttons),
 	.status            (status),
-	.status_menumask   (1'b0),
+	.status_menumask   (status_menumask),
+	.new_vmode         (mame_timing_selected),
 	.ioctl_upload      (ioctl_upload),
 	.ioctl_upload_req  (ioctl_upload_req),
 	.ioctl_upload_index(8'h02),
@@ -112,25 +175,29 @@ hps_io #(.CONF_STR(CONF_STR), .WIDE(1)) hps_io
 // It is asynchronous to clk_sys, so assert immediately and release only after
 // three clean edges. This early assertion also quiesces new DDR commands before
 // the framework safe terminator reaches its own two-stage reset lock.
+wire core_async_reset = RESET | mode_switch_reset;
 (* preserve, useioff = 0,
    altera_attribute = {"-name SYNCHRONIZER_IDENTIFICATION FORCED_IF_ASYNCHRONOUS"} *)
 logic [2:0] framework_reset_pipe = 3'b111;
-always_ff @(posedge clk_sys or posedge RESET) begin
-	if (RESET)
+always_ff @(posedge clk_sys or posedge core_async_reset) begin
+	if (core_async_reset)
 		framework_reset_pipe <= 3'b111;
 	else
 		framework_reset_pipe <= {framework_reset_pipe[1:0], 1'b0};
 end
 wire framework_reset = framework_reset_pipe[2];
 
-// PLL lock is asynchronous to clk_sys. Assert reset immediately on lock loss,
-// then release it only after three clean system-clock edges. Warm MiSTer resets
-// intentionally do not clear the persistent DDR loader state.
+// A source-PLL failure is always a cold-memory boundary. A transport-lock drop
+// is cold only when it was not requested by the protected carrier switch. The
+// controller asserts preserve_memory before stopping the transport and keeps it
+// asserted until the replacement clock has been stably locked.
+wire memory_clock_ready = source_plls_ready &
+	(pll_transport_locked | preserve_memory);
 (* preserve, useioff = 0,
    altera_attribute = {"-name SYNCHRONIZER_IDENTIFICATION FORCED_IF_ASYNCHRONOUS"} *)
 logic [2:0] memory_reset_pipe = 3'b111;
-always_ff @(posedge clk_sys or negedge pll_locked) begin
-	if (!pll_locked)
+always_ff @(posedge clk_sys or negedge memory_clock_ready) begin
+	if (!memory_clock_ready)
 		memory_reset_pipe <= 3'b111;
 	else
 		memory_reset_pipe <= {memory_reset_pipe[1:0], 1'b0};
@@ -169,6 +236,7 @@ itech32_core core
 	.clk            (clk_sys),
 	.memory_reset   (memory_reset),
 	.memory_quiesce (framework_reset),
+	.memory_quiesced(memory_quiesced),
 	.reset          (reset),
 	.ioctl_download (ioctl_download),
 	.ioctl_upload   (ioctl_upload),
@@ -181,6 +249,7 @@ itech32_core core
 	.nvram_dirty    (nvram_dirty),
 	.joystick_0     (game_joystick_0),
 	.joystick_1     (game_joystick_1),
+	.mame_timing    (mame_timing_selected),
 	.DDRAM_CLK      (DDRAM_CLK),
 	.DDRAM_BUSY     (DDRAM_BUSY),
 	.DDRAM_BURSTCNT (DDRAM_BURSTCNT),
@@ -202,11 +271,12 @@ itech32_core core
 	.audio_left     (core_audio_left),
 	.audio_right    (core_audio_right),
 	.audio_strobe   (core_audio_strobe),
-	.core_active    (core_active)
+	.core_active    (core_active),
+	.sftm_mode      (sftm_mode)
 );
 
 // Direct video has no framework-generated output raster. Keep a legal
-// 508x286/54.75-Hz raster running while ROM loading and while the game CRTC is
+// 508x286 raster running while ROM loading and while the game CRTC is
 // unprogrammed, then enter the game raster only on its VSYNC boundary. This
 // keeps the direct-video clock/sync contract alive even if software has not
 // reached the CRTC setup yet; it also leaves a visible OSD over black.
@@ -427,8 +497,8 @@ assign LED_USER  = ioctl_download | core_active;
 endmodule
 
 // Always-running black raster for direct-video acquisition before the board
-// CRTC is programmed. Geometry matches the measured ITech32 frame totals and
-// uses the same exact /6 cadence as the game path.
+// CRTC is programmed. Geometry matches SFTM's programmed frame totals and uses
+// the same exact /6 cadence as the selected game path.
 module itech32_fallback_raster (
 	input  logic        clk,
 	input  logic        reset,
