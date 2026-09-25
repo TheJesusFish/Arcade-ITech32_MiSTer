@@ -29,6 +29,35 @@ The resulting bitstream is `output_files/Arcade-ITech32.rbf`. Check the fitter a
 TimeQuest reports before distributing a newly built core; a completed assembler
 alone does not establish timing closure.
 
+### HDMI divider placement check
+
+The stock framework's HDMI reconfiguration controller writes physical PLL
+counter **C5**. The project QSF pins the HDMI output to C5
+(`PLLOUTPUTCOUNTER_X0_Y5_N1`). This avoids incorrect HDMI refresh rates
+without changing `sys/`. Logical `counter[0]` in the source does not mean
+physical C0. See [Template issue #112](https://github.com/MiSTer-devel/Template_MiSTer/issues/112).
+
+The core wrapper distributes its unchanged 50 MHz PLL reference through a
+dedicated clock-control block. This frees the two game-clock source PLLs from
+the bottom PLL sites needed by the transport/HDMI pair. The reference buffer
+has a constant selection; it does not divide, gate, or switch the clock.
+
+After a fresh fit, check that the location assignment is not ignored. Also
+generate a functional post-fit netlist from that same fitted database and check
+the physical counter number:
+
+```sh
+quartus_eda Arcade-ITech32 --simulation --tool=modelsim --format=verilog --write_settings_files=off --output_directory=output_files/hdmi-check
+python scripts/check_hdmi_pll.py output_files/hdmi-check/Arcade-ITech32.vo
+```
+
+The check must report `HDMI_PLL_CHECK_PASS`. Do not use a netlist left over from
+an earlier build. Generated netlists remain local build output. Finally, verify
+the lower (digital output) timing line in MiSTer's information menu at more than
+one output resolution and in each `vsync_adjust` mode. A captured video's fixed
+frame rate, or the requested pixel-clock value alone, cannot establish the
+actual HDMI refresh rate.
+
 `sys/build_id.tcl` is the standard pre-flow hook. A full flow regenerates the build
 date in `build_id.v` and the local JTAG programming description `jtag.cdf`.
 The checked-in build stamp also permits direct-stage builds. Updating the date,

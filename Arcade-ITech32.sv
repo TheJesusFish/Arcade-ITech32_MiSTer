@@ -82,16 +82,28 @@ wire  [31:0] joystick_1;
 wire  [11:0] game_joystick_0;
 wire  [11:0] game_joystick_1;
 
+// Distribute the unchanged 50 MHz reference through a dedicated clock-control
+// block. The two source PLLs can then use pin-fed GCLK reference routing instead
+// of competing with the transport/HDMI pair for the two bottom PLL sites.
+// This permits the stock framework's mandatory physical HDMI C5 placement.
+// Constant selection: no frequency change, clock gating, or fabric clock mux.
+wire clk_pll_reference;
+cyclonev_clkselect pll_reference_buffer (
+	.clkselect(2'b00),
+	.inclk({3'b000, CLK_50M}),
+	.outclk(clk_pll_reference)
+);
+
 pll pll_board
 (
-	.refclk  (CLK_50M),
+	.refclk  (clk_pll_reference),
 	.rst     (1'b0),
 	.outclk_0(clk_board),
 	.locked  (pll_board_locked)
 );
 
 itech32_mame_pll mame_pll (
-	.refclk(CLK_50M),
+	.refclk(clk_pll_reference),
 	.reset(1'b0),
 	.outclk(clk_mame),
 	.locked(pll_mame_locked)
