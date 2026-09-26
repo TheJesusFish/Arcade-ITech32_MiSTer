@@ -60,7 +60,7 @@ actual HDMI refresh rate.
 
 `sys/build_id.tcl` is the standard pre-flow hook. A full flow regenerates the build
 date in `build_id.v` and the local JTAG programming description `jtag.cdf`.
-The checked-in build stamp also permits direct-stage builds. Updating the date,
+The stamp is generated locally and is not checked in. Updating the date,
 using another Quartus version, or rerouting can change the RBF bytes; source
 availability is not a claim of bit-for-bit reproducibility across tool versions.
 
@@ -68,6 +68,9 @@ availability is not a claim of bit-for-bit reproducibility across tool versions.
 
 `scripts/build_quartus.ps1` runs map, fit, assembly, and timing analysis while
 preventing the individual stages from exporting rewritten project settings.
+For `map` or `compile`, it creates `build_id.v` if missing and preserves an
+existing stamp. Later stages require the stamp from the preceding map. `-WhatIf`
+does not generate a stamp or run compilation.
 It accepts the Quartus installation root and an optional temporary drive mapping;
 see its parameter block for the available stage and path options.
 
@@ -108,6 +111,15 @@ of this source distribution.
 ## Upload Hygiene
 
 Run `python scripts/check_source_tree.py` and review Git's proposed additions.
+The checker recognizes both `ITech32` and `Arcade-ITech32` RBF basenames,
+the reviewed PLL instance settings, and the normal-flow build-stamp generator.
+Run its fixtures and the related build-helper/HDMI checks with:
+
+```sh
+python -m unittest discover -s scripts -p "test_*.py"
+```
+
+The build-helper fixtures require Windows PowerShell and do not launch Quartus.
 The repository must not contain game archives, ROM-derived fixtures, compiled
 cores, build databases, logs, captures, or actual simulation results. Generate
 test output under ignored `sim/build/` or outside the checkout. `.gitignore`

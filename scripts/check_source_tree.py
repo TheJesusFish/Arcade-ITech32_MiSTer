@@ -27,7 +27,7 @@ BLOCKED_SUFFIXES = {".rbf", ".rbf_cd", ".sof", ".pof", ".qar", ".qdb", ".qws",
                     ".wav", ".flac", ".mp3", ".mp4", ".mkv", ".avi", ".ppm", ".pgm",
                     ".pem", ".key", ".ppk"}
 REQUIRED = {"Arcade-ITech32.qpf", "Arcade-ITech32.qsf", "Arcade-ITech32.sdc",
-            "Arcade-ITech32.sv", "files.qip", "build_id.v", "README.md", "LICENSE",
+            "Arcade-ITech32.sv", "files.qip", "sys/build_id.tcl", "README.md", "LICENSE",
             "CREDITS.md", "LICENSES/LGPL-3.0-or-later.txt",
             "LICENSES/BSD-3-Clause-Greg-Miller.txt", "sys/sys.qip", "sys/sys.tcl",
             "sys/sys_analog.tcl", "sys/emu_ports.vh", "rtl/pll.qip", "rtl/pll.v",
@@ -36,13 +36,8 @@ REQUIRED = {"Arcade-ITech32.qpf", "Arcade-ITech32.qsf", "Arcade-ITech32.sdc",
             "releases/Time Killers (v1.32).mra", "releases/BloodStorm (v2.22).mra"}
 
 
-def main() -> int:
-    result = subprocess.run(["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
-                            cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
-    if result.returncode:
-        print("Run this checker inside a Git checkout with Git installed.", file=sys.stderr)
-        return 1
-    candidates = {name for name in result.stdout.decode("utf-8", errors="strict").split("\0") if name}
+def check_tree(root: Path, candidates: set[str]) -> list[str]:
+    """Validate tracked plus unignored source inputs, without running project Tcl."""
     problems: list[str] = []
     for name in sorted(candidates):
         relative = PurePosixPath(name)
@@ -56,7 +51,7 @@ def main() -> int:
                 relative.name.lower().startswith(".env") or "known_hosts" in relative.name.lower()):
             problems.append(f"Private/generated file is an upload candidate: {name}")
             continue
-        path = ROOT / name
+        path = root / name
         if path.is_symlink() or not path.is_file():
             problems.append(f"Missing or non-regular upload input: {name}")
             continue
@@ -76,7 +71,7 @@ def main() -> int:
         if suffix == ".mra":
             try:
                 mra = ET.fromstring(contents)
-                if mra.findtext("rbf") != "Arcade-ITech32":
+                if mra.findtext("rbf") not in {"ITech32", "Arcade-ITech32"}:
                     problems.append(f"Unexpected RBF target: {name}")
                 for part in mra.findall(".//part"):
                     # ROM names/CRCs and short padding/config bytes are metadata.
@@ -87,19 +82,39 @@ def main() -> int:
             except ET.ParseError as error:
                 problems.append(f"Invalid MRA XML: {name}: {error}")
     required = set(REQUIRED)
-    if (ROOT / "files.qip").is_file():
-        for line in (ROOT / "files.qip").read_text(encoding="utf-8-sig").splitlines():
+    if (root / "files.qip").is_file():
+        for number, line in enumerate((root / "files.qip").read_text(encoding="utf-8-sig").splitlines(), 1):
+            line = line.strip()
             match = re.fullmatch(r"set_global_assignment -name (?:SYSTEMVERILOG|VERILOG|VHDL|SDC)_FILE (\S+)", line)
             if match:
-                required.add(match[1])
-            elif line.strip() and not line.lstrip().startswith("#"):
-                problems.append("Unexpected files.qip syntax; review build-input validation")
+                source = PurePosixPath(match[1])
+                if (source.is_absolute() or ".." in source.parts or
+                        re.search(r"[\\:$;\[\]{}\"]", match[1])):
+                    problems.append(f"Nonportable or dynamic source path in files.qip:{number}")
+                else:
+                    required.add(match[1])
+            elif line and not line.startswith("#"):
+                # Accept the reviewed instance settings, not arbitrary Tcl or
+                # every set_instance_assignment (which could hide file inputs).
+                assignment = re.fullmatch(
+                    r'set_instance_assignment -name (PLL_COMPENSATION_MODE|PLL_AUTO_RESET|PLL_BANDWIDTH_PRESET) '
+                    r'(DIRECT|ON|AUTO) -to "([A-Za-z0-9_*:|]+)"', line)
+                allowed = {"PLL_COMPENSATION_MODE": "DIRECT", "PLL_AUTO_RESET": "ON",
+                           "PLL_BANDWIDTH_PRESET": "AUTO"}
+                if not assignment or allowed[assignment[1]] != assignment[2]:
+                    problems.append(f"Unexpected files.qip syntax at line {number}; review build-input validation")
     for name in sorted(required - candidates):
         problems.append(f"Required source is absent or ignored: {name}")
     # Catch accidental references to local sibling experiments in active project files.
-    qsf = ROOT / "Arcade-ITech32.qsf"
+    qsf = root / "Arcade-ITech32.qsf"
     if qsf.is_file():
-        for line in qsf.read_text(encoding="utf-8-sig").splitlines():
+        qsf_text = qsf.read_text(encoding="utf-8-sig")
+        # build_id.v is generated locally, so require its generator and the
+        # normal-flow hook instead of requiring generated output in Git.
+        if not re.search(r'^\s*set_global_assignment -name PRE_FLOW_SCRIPT_FILE '
+                         r'"quartus_sh:sys/build_id.tcl"\s*$', qsf_text, re.MULTILINE):
+            problems.append("Missing build_id.v generation hook in Arcade-ITech32.qsf")
+        for line in qsf_text.splitlines():
             if line.lstrip().startswith("#"):
                 continue
             source = re.fullmatch(r"source (\S+)", line.strip())
@@ -108,6 +123,17 @@ def main() -> int:
             if re.search(r"(?:\.\./|[A-Za-z]:/|[A-Za-z]:\\| /rtl/)", line):
                 problems.append("Nonportable external path in Arcade-ITech32.qsf")
                 break
+    return problems
+
+
+def main() -> int:
+    result = subprocess.run(["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
+                            cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+    if result.returncode:
+        print("Run this checker inside a Git checkout with Git installed.", file=sys.stderr)
+        return 1
+    candidates = {name for name in result.stdout.decode("utf-8", errors="strict").split("\0") if name}
+    problems = check_tree(ROOT, candidates)
     if problems:
         for problem in problems:
             print("FAIL:", problem, file=sys.stderr)

@@ -1,9 +1,10 @@
 <#
 .SYNOPSIS
-Build the core with the pinned sources and build date using Quartus 17.0.x.
+Build the core with the selected sources and local build date using Quartus 17.0.x.
 .DESCRIPTION
 Run map, fit, asm and sta directly, without rewriting project settings or
-regenerating build_id.v. Install Quartus Prime Lite 17.0.2 with Cyclone V support.
+replacing an existing build_id.v. Map/compile generates it if missing.
+Install Quartus Prime Lite 17.0.2 with Cyclone V support.
 Quartus discovery order: -QuartusRoot, QUARTUS_ROOTDIR, QUARTUS_ROOTDIR_OVERRIDE,
 then quartus_map on PATH. All stages must come from the same installation.
 .PARAMETER QuartusRoot
@@ -34,10 +35,14 @@ $BuildOnWindows = [Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT
 $BuildExeSuffix = if ($BuildOnWindows) { '.exe' } else { '' }
 $BuildStages = if ($Flow -eq 'compile') { @('map', 'fit', 'asm', 'sta') } else { @($Flow) }
 
-foreach ($BuildInput in @('Arcade-ITech32.qpf', 'Arcade-ITech32.qsf', 'files.qip', 'build_id.v')) {
+foreach ($BuildInput in @('Arcade-ITech32.qpf', 'Arcade-ITech32.qsf', 'files.qip')) {
     if (-not (Test-Path -LiteralPath (Join-Path $BuildProjectRoot $BuildInput) -PathType Leaf)) {
         throw "Required source input is missing: $BuildInput. Restore it from the source checkout."
     }
+}
+$BuildStampPath = Join-Path $BuildProjectRoot 'build_id.v'
+if (-not (Test-Path -LiteralPath $BuildStampPath -PathType Leaf) -and $Flow -notin @('compile', 'map')) {
+    throw 'build_id.v is missing. Run a map/compile first; later stages must retain that build stamp.'
 }
 
 if (-not $QuartusRoot) { $QuartusRoot = $env:QUARTUS_ROOTDIR }
@@ -101,6 +106,14 @@ $BuildLocationPushed = $false
 $BuildFailure = $null
 $BuildCleanupFailure = $null
 try {
+    if (-not (Test-Path -LiteralPath $BuildStampPath -PathType Leaf)) {
+        # Match the upstream pre-flow stamp format without executing or editing
+        # sys/. CreateNew prevents replacing a stamp created by another process.
+        $BuildStampBytes = [Text.Encoding]::ASCII.GetBytes(('`define BUILD_DATE "{0}"' -f (Get-Date -Format yyMMdd)))
+        $BuildStampStream = [IO.File]::Open($BuildStampPath, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write)
+        try { $BuildStampStream.Write($BuildStampBytes, 0, $BuildStampBytes.Length) }
+        finally { $BuildStampStream.Dispose() }
+    }
     $BuildWorkingRoot = $BuildProjectRoot
     if ($BuildDrive) {
         & $BuildSubstProgram $BuildDrive $BuildProjectRoot

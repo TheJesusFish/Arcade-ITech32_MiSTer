@@ -33,7 +33,7 @@ For packages needing an explicit libstdc++ ABI selection, use
 can be passed with, for example,
 `--verilator-arg=--no-sched-zero-delay` on versions that support that option.
 
-Only the `ddr`, `audio-arbitration`, `sound-service`, and `nvram-transfer` tests
+The `ddr`, `graphics-queue`, `audio-arbitration`, `sound-service`, and `nvram-transfer` tests
 add `-Wno-PROCASSWIRE`. The unchanged upstream framework modules used by those
 tests contain procedural assignments to ports/nets declared as wires, which
 newer Verilator versions otherwise reject. This compatibility waiver preserves
@@ -72,6 +72,7 @@ explicit `*_PASS` assertion message and zero simulation errors.
 | `inputs`, `blood-inputs` | Input and DIP mapping |
 | `cpu-adapter` | TG68 bus-adapter handshake |
 | `blitter`, `rle-prefetch` | Synthetic blits and RLE prefetch behavior |
+| `graphics-queue` | Production board/main bus/blitter/gather/FIFO/forward slice and DDR service/terminator together; delayed writes, full/wrapped FIFO, ordered completion/readback, partial qwords, both planes, repeated addresses, raw/RLE/copy commands, and board-reset cancellation |
 | `sftm-protection` | SFTM zero-read protection source, protected-byte lane, and unchanged Time Killers/BloodStorm open-bus policy |
 | `blood-bus`, `blood-init` | BloodStorm bus decode and initial-RAM behavior |
 | `ddr` | Memory service, resident reads, reset, and write overlap |
@@ -104,6 +105,38 @@ Video receiver, or full games. They do not prove whole-game speed or complete
 sound fidelity. The TG68K.C VHDL itself is not executed by this suite; its adapter
 is tested with synthetic bus traffic. No simulator model substitutes for a
 physical video-output compatibility test.
+
+### Graphics queue integration and sensitivity
+
+```sh
+python3 sim/run.py graphics-queue
+python3 sim/check_graphics_queue_guards.py
+```
+
+The integration test compiles the actual `itech32_board.sv`; its forward holding
+stage is not copied into a test model. An authored CPU bus driver substitutes
+for TG68 and writes the real main-bus registers. The real drawing engine,
+gather/FIFO, board stage, memory service, and framework safe terminator remain
+connected. External memory is a synthetic Avalon model with delayed acceptance
+and delayed read responses. A synthetic single-qword scan consumer checks
+ordered visibility; this is not a complete raster/scanout timing test.
+
+Three fixed seeds exercise reproducible backpressure. Exact transaction
+scoreboards span gather emission through queue and board-stage acceptance;
+an independent source-pixel image and authored raw/RLE/copy expectations check
+the results. Deliberate queue saturation must hit full, read/write pointer wrap,
+simultaneous FIFO read/write, and retained completion-tail coverage. Board-reset
+tests distinguish intentionally cancelled upstream entries from writes already
+accepted by the persistent memory service. A completed command need not have
+flushed every posted write to external RAM, but a subsequent ordered read must
+return the completed drawing.
+
+The sensitivity runner generates two broken copies below its build directory:
+one bypasses the completion fence, the other reorders FIFO reads. Each must
+fail at the intended integration assertion, not merely fail compilation. It
+never modifies production sources. It accepts the tool/compiler options from
+`sim/run.py` (including `--build-dir`) but no positional test names. Both the
+broken copies and all results are generated output, never upload inputs.
 
 The sound specification choices and remaining interface abstractions are listed
 in `docs/SOUND.md`. A diagnostic run completing is not a manufacturer-behavior
