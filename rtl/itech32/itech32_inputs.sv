@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// MiSTer controller mapping for Street Fighter: The Movie's 32-bit ports.
+// MiSTer controller mapping onto the ITech32 board input ports; the wiring
+// follows the board profile's input layout.
 `timescale 1ns/1ps
 
-module itech32_inputs (
+module itech32_inputs
+	import itech32_profile_pkg::*;
+(
 	input  logic        clk,
 	input  logic        reset,
-	input  logic        timekill_mode,
-	input  logic        bloodstorm_mode,
+	input  board_profile_t profile,
 	input  logic [11:0] joystick_0,
 	input  logic [11:0] joystick_1,
 	input  logic        service_button,
@@ -49,10 +51,8 @@ module itech32_inputs (
 		input_extra = 32'd0;
 		input_p4 = 32'd0;
 		input_dips = 32'd0;
-		input_p4 = 32'd0;
-		input_dips = 32'd0;
 
-		if (timekill_mode) begin
+		if (profile.input_layout == INPUTS_TIMEKILL) begin
 			// The 68000 reads these as 16-bit words.  Board signals occupy the
 			// low byte and the unused high byte is pulled up.
 			input_p1[31:16] = {
@@ -81,7 +81,7 @@ module itech32_inputs (
 				dip_switches[7:4], sound_special,
 				~vblank, ~service_button, ~dip_switches[0]
 			};
-		end else if (bloodstorm_mode) begin
+		end else if (profile.input_layout == INPUTS_BLOODSTORM) begin
 			// BloodStorm's 16-bit ports have zero upper bytes, with B2/B4/B5
 			// on the separate EXTRA port. Start/Coin stay in MiSTer slots10/11.
 			input_p1[23:16] = {~joystick_0_q[3:0], ~joystick_0_q[6],

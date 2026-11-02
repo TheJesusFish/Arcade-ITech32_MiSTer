@@ -77,8 +77,10 @@ swap and MiSTer conversion. MAME applies the ITech32 route gain in a
 floating-point mixer. The MiSTer boundary instead normalizes the complete signed
 20-bit range into signed 16 bits before the framework mixer; applying the route
 gain before that fixed-width boundary hard-clips otherwise valid ES5506 output.
-This preserves the waveform and leaves volume adjustment to the downstream
-MiSTer mixer. Channel 0 selection is a compatibility assumption for the
+This default (Audio Gain 1x) preserves the waveform. Because the MiSTer volume
+control can only attenuate, the Audio Settings page also offers 2x and 4x
+gain; it is applied at full 20-bit precision and saturates at the signed
+16-bit limits instead of wrapping. Channel 0 selection is a compatibility assumption for the
 supported boards, not a substitute for a traced physical schematic.
 
 PAGE 40 writes target the same channel accumulators used by normal voices.

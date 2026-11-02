@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //
 // ITech32-facing 68EC020 wrapper.  The canonical TG68K.C implementation is
-// VHDL in rtl/cpu/tg68k; Verilator uses the reproducibly generated Verilog
-// equivalent produced by sim/generate_tg68_verilog.ps1.
+// VHDL in rtl/cpu/tg68k. The repository's TG68 checks run under ModelSim (see
+// sim/README.md); a Verilator build would need a separately generated Verilog
+// model of TG68K.C, which is not included.
 
 module itech32_tg68_cpu (
 	input  logic        clk,

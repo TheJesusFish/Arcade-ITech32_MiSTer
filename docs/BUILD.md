@@ -13,8 +13,7 @@ to fetch before building. Quartus itself supplies its device and megafunction
 libraries.
 
 `.gitattributes` preserves the bundled source bytes instead of silently changing
-upstream line endings during checkout. `scripts/quartus_vendor.tcl` locates the
-required vendor library relative to the running Quartus installation.
+upstream line endings during checkout.
 
 ## Standard Build
 
@@ -37,10 +36,9 @@ counter **C5**. The project QSF pins the HDMI output to C5
 without changing `sys/`. Logical `counter[0]` in the source does not mean
 physical C0. See [Template issue #112](https://github.com/MiSTer-devel/Template_MiSTer/issues/112).
 
-The core wrapper distributes its unchanged 50 MHz PLL reference through a
-dedicated clock-control block. This frees the two game-clock source PLLs from
-the bottom PLL sites needed by the transport/HDMI pair. The reference buffer
-has a constant selection; it does not divide, gate, or switch the clock.
+The core uses one free-running PLL, instantiated as `pll pll` exactly as the
+template expects, so `sys/sys_top.sdc` derives and groups its clock. It is
+never reset by a warm reset.
 
 After a fresh fit, check that the location assignment is not ignored. Also
 generate a functional post-fit netlist from that same fitted database and check
@@ -95,7 +93,7 @@ known-folder path. Do not reuse a drive letter already assigned to another task.
 | `Arcade-ITech32.sv` | MiSTer `emu` wrapper and menu |
 | `files.qip` | Core RTL and constraint input list |
 | `rtl/itech32/` | CPU interface, board, blitter, inputs, and video |
-| `rtl/memory/` | DDR memory service |
+| `rtl/memory/` | DDR memory scheduler plus its main-CPU, graphics, and sound ROM cache fronts |
 | `rtl/sound/` | Sound board, 6809 interface, VIA, and ES5506 behavior |
 | `rtl/cpu/tg68k/` | Vendored TG68K.C source |
 | `rtl/pll*` | Core PLL source and Quartus metadata |

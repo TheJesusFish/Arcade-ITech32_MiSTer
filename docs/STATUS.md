@@ -117,6 +117,11 @@ build trees are intentionally not part of this repository.
 
 ## SFTM timing investigation (2026-09-07)
 
+> Superseded on 2026-11-02: the `MAME Timings` option, its second source PLL,
+> clock selector, transport PLL, and mode controller were removed (see
+> "Audit changes test build"). The core again uses one free-running
+> 47.727273 MHz `pll`. This section is kept as history.
+
 - A MAME 0.288 memory-tap trace of SFTM v1.12 observed the stable tuple
   `HTOTAL=0x1fc`, `HSYNC=0x1d6`, `HBSTART=0x1a4`, `HBEND=0x24`,
   `VTOTAL=0x11e`, `VSYNC=0x119`, `VBSTART=0x103`, and `VBEND=0x3` after
@@ -201,6 +206,82 @@ build trees are intentionally not part of this repository.
   bits (61%), 446 RAM blocks (81%), 48 DSP blocks (43%), and 5 of 6 PLLs.
   `sys/` remains unchanged. The warm-switch behavior still requires physical
   qualification on both normal scaler and Direct Video outputs.
+
+## Audit changes test build (2026-11-02)
+
+Changes from a code audit against the MiSTer framework and Cyclone V HDL
+practice notes:
+
+- NVRAM upload race fixed. The TG68 adapter can still present a cycle it
+  captured just before an upload freezes the CPUs. The main bus previously
+  served such an access from the host's address (CPU reads in Time Killers and
+  BloodStorm work RAM; SFTM NVRAM writes landed at the host address). New CPU
+  accesses now wait for the transfer, accepted ones drain with their own
+  address, and only then does the host receive the RAM (`nvram_host_ready`).
+  The new `nvram-upload-race` test fails on the previous design.
+- Analog RGB is forced black outside the board's valid picture window. The
+  framework mixer does not blank RGB, so blanking previously carried palette
+  colour, which affects CRT and upscaler black-level clamping. HDMI is unaffected.
+- The framework scanline effect is disabled while the analog H-scaler is
+  active, so alternate 15 kHz picture lines are no longer dimmed.
+- The SFTM `MAME Timings` option and its runtime clock switch were removed. The
+  core uses one free-running `pll`, constrained by the stock `sys_top.sdc`;
+  PLL use fell from 5 to 3 of 6.
+- Menu: settings version `v,1` (saved options reset once to defaults), Stereo
+  Mix, Audio Gain 1x/2x/4x (saturating, default 1x is unchanged), and Pause
+  When OSD Open (default Off). The dead `D0` aspect-ratio prefix was removed.
+- The SDC documents the six-clock pixel budget behind the palette multicycle
+  exception; `itech32_board.sv` asserts it in simulation.
+- Maintainability: the DDR service is split into the scheduler plus
+  `itech32_ddr_main_cache`, `itech32_ddr_grom_cache`, and
+  `itech32_ddr_sound_cache`; write-only served/cache bookkeeping for the three
+  fronts was removed. Diagnostic video branches, hardware probes, and the debug
+  hub hook were removed; the fallback raster moved to its own file.
+
+Verification:
+
+- The original tree passed 95 runs across 46 testbenches. The final tree passes
+  94 runs across 45 testbenches (two clock-switch tests retired, one race test
+  added); the graphics-queue sensitivity check rejects both mutants. A full
+  `emu` Verilator lint is clean.
+- Quartus Prime Lite 17.0.2 clean build: worst setup slack `+0.292 ns` (HDMI
+  domain), core clock `+0.829 ns`; worst hold `+0.057 ns`; TNS `0` for setup
+  and hold at all four corners; recovery, removal, and minimum pulse width
+  positive; zero unconstrained clocks. The post-fit HDMI check reports
+  physical C5.
+- Utilization is 25,310 ALMs (60%), 32,298 registers, 3,434,992 block-memory
+  bits (61%), 444 RAM blocks (80%), 48 DSP blocks (43%), and 3 of 6 PLLs.
+  The RBF SHA-256 is
+  `16C13CBF7E173A4F747DC5D8CC7D4514C5952665869324334363F0C283941B60`.
+- Not yet hardware-qualified. Priorities: an NVRAM save while playing each
+  board family, analog black level on a CRT or upscaler, the H-scaler with a
+  scanline effect selected, Direct Video, and the new menu options. `sys/` is
+  unchanged.
+
+## Board-profile refactor (2026-11-02)
+
+Preparation for further `itech32.cpp` games, with no intended behavior change:
+
+- `rtl/itech32/itech32_profile_pkg.sv` defines `board_profile_t` and the
+  selector table. The MRA selector byte (unchanged: 00 SFTM, 01 Time Killers,
+  02 BloodStorm) is decoded and registered once; blocks read independent fields
+  (MAME address-map family, input layout, palette format, framebuffer planes,
+  sound-board revision and bank count, NVRAM layout, protection address,
+  graphics-ROM pages, sample-bank slots) instead of game-identity bits. See
+  "Board Profiles" in `docs/DEVELOPMENT.md`.
+- Equivalence: a differential simulation ran the previous main bus, input
+  mapper, and graphics-ROM front beside the profile versions on identical random
+  traffic for all three boards, including board switches, NVRAM transfers, and
+  page-boundary GROM addresses: 1,440,047 compared cycles, zero mismatches. A
+  deliberately wrong profile is rejected immediately. The sample-bank map was
+  compared exhaustively. The full suite passes 94 runs across 45 testbenches.
+- Quartus Prime Lite 17.0.2 (fitter seed 7): worst setup slack `+0.065 ns` (HDMI
+  scaler), core clock `+1.178 ns`, worst hold `+0.064 ns`, TNS `0` at all four
+  corners; post-fit HDMI check reports physical C5. The default seed placed the
+  framework `ascal` vertical filter `-0.153 ns` short at the slow -40 C corner
+  while the core clock was `+1.138 ns`. Utilization is 25,318 ALMs, 32,322
+  registers, 444 RAM blocks, 48 DSP blocks, and 3 of 6 PLLs. RBF SHA-256:
+  `2984ADF51A6241D6B21E29388ADC504EA08B011C49B5B7EE16047BF2C716A85D`.
 
 ## Reproduction
 

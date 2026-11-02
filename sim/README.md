@@ -39,6 +39,9 @@ tests contain procedural assignments to ports/nets declared as wires, which
 newer Verilator versions otherwise reject. This compatibility waiver preserves
 the actual framework modules and does not disable assertions.
 
+Benches select a board with timekill/bloodstorm mode bits; `sim/tb/itech32_profile_tb_pkg.sv` converts those to the board profile the
+production selector would decode.
+
 The runner always enables assertions and uses deterministic zero initialization.
 The BloodStorm initialization regression then verifies the RTL's own memory-fill
 sequence; it does not supply a pre-filled game memory image.
@@ -66,9 +69,10 @@ explicit `*_PASS` assertion message and zero simulation errors.
 
 | Tests | Scope |
 | --- | --- |
-| `clocks`, `clocks-mame`, `clock-mode`, `crt-adjust`, `video-timing` | Board/MAME clock enables, DDR-quiesced and loader-retaining mode adoption, menu offset decode, and programmable raster timing |
-| `game-selector` | Three board selectors plus unsupported-selector SFTM fallback |
-| `nvram-save-request`, `nvram-io`, `nvram-memory`, `nvram-transfer` | One save per dirty OSD-opening edge, MiSTer upload/dirty protocol, all three backing stores, bounds and byte lanes, plus an exact WIDE=1 `hps_io` save/restore round trip |
+| `clocks`, `crt-adjust`, `video-timing` | Board clock enables and exact /6 pixel cadence, menu offset decode, and programmable raster timing |
+| `game-selector` | Decoded board profile for the three selectors plus unsupported-selector SFTM fallback |
+| `nvram-save-request`, `nvram-io`, `nvram-memory`, `nvram-transfer` | One save per dirty OSD-opening edge, MiSTer upload/dirty protocol and RAM-grant wait, all three backing stores, bounds and byte lanes, plus an exact WIDE=1 `hps_io` save/restore round trip |
+| `nvram-upload-race` | CPU reads/writes in flight when an upload starts: drained with the CPU's own address, new accesses held until the RAM is returned, host data correct |
 | `inputs`, `blood-inputs` | Input and DIP mapping |
 | `cpu-adapter` | TG68 bus-adapter handshake |
 | `blitter`, `rle-prefetch` | Synthetic blits and RLE prefetch behavior |
@@ -92,7 +96,7 @@ explicit `*_PASS` assertion message and zero simulation errors.
 | `sound-phase`, `sound-rom-map`, `sound-cpu`, `via6522` | Sound clocking, decode, authored CPU program, and VIA behavior |
 | `sound-cache-phase` | Real authored sound-CPU program crossing the registered two-way SOUND cache at native phase cadence |
 | `sound-phase-overlap` | Paired architectural bus traces, interrupt handling and readiness invariants while inactive phases overlap memory latency |
-| `sound-output` | Exhaustive signed 20-bit input conversion through the selected stereo swap and full-range, headroom-preserving 16-bit normalization |
+| `sound-output` | Exhaustive signed 20-bit input conversion through the selected stereo swap, full-range 1x normalization, and saturating 2x/4x gain |
 
 The DDR runner uses the current two-edge resident-hit expectation and explicitly
 enables write-overlap coverage. Audio arbitration runs all eight synthetic cases

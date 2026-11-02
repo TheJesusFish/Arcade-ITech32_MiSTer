@@ -21,16 +21,17 @@ module itech32_nvram_memory_tb;
 
 	/* verilator lint_off PINCONNECTEMPTY */
 	itech32_main_bus dut (
-		.clk(clk), .reset(reset), .timekill_mode(timekill_mode),
-		.bloodstorm_mode(bloodstorm_mode), .rom_buffer_invalidate(1'b0),
+		.clk(clk), .reset(reset), .profile(itech32_profile_tb_pkg::mode_profile_protection(timekill_mode, bloodstorm_mode, 15'h7a6a)),
+		.rom_buffer_invalidate(1'b0),
 		.cpu_req(cpu_req), .cpu_we(cpu_we), .cpu_addr(cpu_addr),
 		.cpu_wdata(cpu_wdata), .cpu_be(cpu_be), .cpu_ack(cpu_ack),
 		.cpu_rdata(cpu_rdata), .input_p1(32'd0), .input_p2(32'd0),
 		.input_p3(32'd0), .input_p4(32'd0), .input_dips(32'd0),
-		.input_extra(32'd0), .protection_address(15'h7a6a),
+		.input_extra(32'd0),
 		.nvram_host_access(nvram_host_access),
 		.nvram_host_write(nvram_host_write), .nvram_host_addr(nvram_host_addr),
 		.nvram_host_wdata(nvram_host_wdata), .nvram_host_rdata(nvram_host_rdata),
+		.nvram_host_ready(),
 		.nvram_cpu_write(nvram_cpu_write), .video_req(), .video_we(),
 		.video_addr(), .video_wdata(), .video_be(), .video_ack(1'b0),
 		.video_rdata(16'd0), .rom_req(), .rom_addr(), .rom_ack(1'b0),

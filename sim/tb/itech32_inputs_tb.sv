@@ -13,6 +13,8 @@ module itech32_inputs_tb;
 	logic [7:0] dip_switches = 8'd0;
 	logic [31:0] input_p1, input_p2, input_p3, input_p4, input_dips, input_extra;
 
+	itech32_profile_pkg::board_profile_t profile;
+	assign profile = itech32_profile_tb_pkg::mode_profile(timekill_mode, bloodstorm_mode);
 	itech32_inputs dut (.*);
 	always #5 clk = ~clk;
 

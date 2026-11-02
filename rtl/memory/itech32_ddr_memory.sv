@@ -4,10 +4,19 @@
 // DDRAM_ADDR addresses 64-bit words.  The byte-addressed image begins at
 // 0x3000_0000, matching MiSTer's fast ROM-download staging area.  Within a
 // 64-bit DDR word, bits [7:0] hold the byte at the lowest address.
+//
+// This module owns the shared DDR scheduler, the ROM loader / reset-vector
+// copy / framebuffer clear sequence, the framebuffer write combiner and the
+// scanout burst channel. The three ROM read fronts are separate modules:
+// itech32_ddr_main_cache (68020 program), itech32_ddr_grom_cache (blitter
+// graphics) and itech32_ddr_sound_cache (6809 program). Each answers its own
+// hits and exposes only a miss; the scheduler owns refills and responses.
 
 `timescale 1ns/1ps
 
-module itech32_ddr_memory #(
+module itech32_ddr_memory
+	import itech32_profile_pkg::*;
+#(
 	parameter logic [31:0] DDR_BYTE_BASE = 32'h3000_0000,
 	parameter logic [27:0] MAIN_BASE     = 28'h000_0000,
 	parameter logic [27:0] SOUND_BASE    = 28'h040_0000,
@@ -21,8 +30,7 @@ module itech32_ddr_memory #(
 ) (
 	input  logic        clk,
 	input  logic        reset,
-	input  logic        timekill_mode,
-	input  logic        bloodstorm_mode,
+	input  board_profile_t profile,
 	// Framework RESET reaches MiSTer's safe DDR terminator. Stop launching
 	// new commands before that terminator locks, but let accepted commands
 	// drain so the persistent loader/cache state survives a warm reset.
@@ -63,8 +71,9 @@ module itech32_ddr_memory #(
 	output logic        sound_ack,
 	output logic [7:0]  sound_rdata,
 
-	// Byte address within one logical4MiB ES5506 region. SFTM populates0/3,
-	// Time Killers2, BloodStorm0/2; empty banks return zero without DDR traffic.
+	// Byte address within one logical 4 MiB ES5506 region. The board profile
+	// maps each bank to a DDR slot or to an empty bank, which returns zero
+	// without DDR traffic (SFTM populates 0/3, Time Killers 2, BloodStorm 0/2).
 	input  logic        sample_req,
 	input  logic [1:0]  sample_bank,
 	input  logic [21:0] sample_addr,
@@ -125,7 +134,6 @@ module itech32_ddr_memory #(
 	localparam logic [CLEAR_COUNTER_WIDTH-1:0] CLEAR_LAST =
 		CLEAR_COUNTER_WIDTH'(VRAM_CLEAR_LINES - 1);
 	localparam integer MAIN_CACHE_SET_BITS = 5;
-	localparam integer MAIN_CACHE_SETS = 1 << MAIN_CACHE_SET_BITS;
 	localparam integer MAIN_CACHE_TAG_BITS = 22 - 7 - MAIN_CACHE_SET_BITS;
 
 	typedef enum logic [4:0] {
@@ -149,76 +157,31 @@ module itech32_ddr_memory #(
 		ST_VRAM_BURST_WRITE = 5'd19
 	} state_t;
 
-	typedef enum logic [2:0] {
-		MF_FREE            = 3'd0,
-		MF_PROBE           = 3'd1,
-		MF_HIT_RESPONSE    = 3'd2,
-		MF_MISS_WAIT       = 3'd3,
-		MF_REFILL_PROBE    = 3'd4,
-		MF_REFILL_RESPONSE = 3'd5,
-		MF_WAIT_RELEASE    = 3'd6
-	} main_front_state_t;
-
-	typedef enum logic [2:0] {
-		GF_FREE         = 3'd0,
-		GF_PROBE        = 3'd1,
-		GF_RESPONSE     = 3'd2,
-		GF_MISS_WAIT    = 3'd3,
-		GF_WAIT_RELEASE = 3'd4
-	} grom_front_state_t;
-
-	typedef enum logic [2:0] {
-		SF_FREE         = 3'd0,
-		SF_HIT_RESPONSE = 3'd1,
-		SF_MISS_WAIT    = 3'd2,
-		SF_WAIT_RELEASE = 3'd3,
-		SF_PROBE_RESULT = 3'd4
-	} sound_front_state_t;
-
 	state_t state;
-	main_front_state_t main_front_state;
-	grom_front_state_t grom_front_state;
-	sound_front_state_t sound_front_state;
 	// A deliberate carrier change may stop DDRAM_CLK only after this service
 	// has retired or cancelled every physical transaction. Retained write-window
 	// data is local state and is safe to resume after the clock returns.
 	assign quiesce_ack = quiesce && state == ST_IDLE && !DDRAM_RD && !DDRAM_WE;
-	// The 6809 alternates fixed and banked program regions whose physical lines
-	// can share a low-nine-qword index. Two registered ways retain one line from
-	// each region without changing the three-edge local hit contract. Each way is
-	// a canonical synchronous 1W/1R M10K body; only validity resets.
-	(* ramstyle = "M10K, no_rw_check" *) logic [70:0] sound_cache_way0 [0:511];
-	(* ramstyle = "M10K, no_rw_check" *) logic [70:0] sound_cache_way1 [0:511];
-	logic [70:0] sound_cache_way0_q;
-	logic [70:0] sound_cache_way1_q;
-	logic [511:0] sound_cache_valid_way0;
-	logic [511:0] sound_cache_valid_way1;
-	// One bit per set names the next victim only when both ways are valid. It is
-	// intentionally not reset: invalid-first fill makes stale state unobservable.
-	logic [511:0] sound_cache_victim;
-	logic sound_cache_refill;
-	logic sound_cache_publish;
-	logic [18:0] sound_front_addr_q;
-	logic [7:0]  sound_front_data_q;
-	logic        sound_front_hit_q;
-	logic        sound_front_hit_way_q;
-	logic [1:0]  sound_front_valid_q;
-	logic        sound_front_victim_q;
-	logic        sound_front_refill_way_q;
-	logic        sound_front_way0_hit;
-	logic        sound_front_way1_hit;
-	logic [7:0]  sound_front_way0_data;
-	logic [7:0]  sound_front_way1_data;
-	logic        sound_cache_hit_touch;
-	logic        sound_probe_start;
+	// Sound-CPU program ROM front (itech32_ddr_sound_cache). Hits complete there;
+	// only a miss reaches the scheduler, which owns the refill/response.
 	logic        sound_miss_scheduler_active;
 	logic        sound_miss_pending;
+	logic        sound_miss_owned;
+	logic [18:0] sound_front_addr;
+	logic        sound_refill;
+	logic        sound_respond;
+	logic [7:0]  sound_respond_data;
 	// Four additional sample grants are allowed while a SOUND miss waits.
 	// This is an arbitration bound, not a bound on external DDR waitrequest.
 	logic [2:0]  sound_sample_grants;
 
-	logic [4:0] served;
-	logic [38:0] served_signature [0:4];
+	// A held SAMPLE or VRAM request is one transaction until req falls or its
+	// payload changes. MAIN, GROM and SOUND completions are owned by their
+	// fronts and never consult this record.
+	logic        sample_served;
+	logic [23:0] sample_served_signature;
+	logic        vram_served;
+	logic [38:0] vram_served_signature;
 	logic [2:0] rr_client;
 	logic [4:0] pending_clients;
 	logic [4:0] pending_clients_q;
@@ -230,21 +193,6 @@ module itech32_ddr_memory #(
 	logic        capture_vram_qwrite;
 	logic        capture_cacheable;
 	logic        capture_sample_empty;
-	logic [25:0] grom_effective_addr;
-
-	// 8.5MiB is17 pages of512KiB. Reduce the7-bit page, leaving the19
-	// byte-offset wires untouched; three narrow subtracts cover all26-bit
-	// source addresses without a wide divider or a new pipeline/handshake.
-	function automatic logic [25:0] rev1_grom_offset(input logic [25:0] address);
-		logic [6:0] page;
-		begin
-			page = address[25:19];
-			if (page >= 7'd68) page = page - 7'd68;
-			if (page >= 7'd34) page = page - 7'd34;
-			if (page >= 7'd17) page = page - 7'd17;
-			rev1_grom_offset = {page, address[18:0]};
-		end
-	endfunction
 	logic [38:0] capture_signature;
 	logic        vram_client_req;
 	logic        vram_client_write;
@@ -256,55 +204,34 @@ module itech32_ddr_memory #(
 	logic [3:0]  live_vram_buffer_index;
 	logic [17:0] live_scan_row_index;
 	logic        scan_write_buffer_conflict;
-	logic [25:0] grom_front_addr_q;
-	logic [25:0] grom_front_effective_q;
-	logic        grom_front_hit_q;
-	logic        grom_front_cancel;
+	// Graphics-ROM front (itech32_ddr_grom_cache). Hits complete there; only a
+	// miss reaches the scheduler, which owns the 16-beat line refill.
+	logic [25:0] grom_front_effective;
 	logic        grom_miss_scheduler_active;
 	logic        grom_miss_pending;
-	logic        grom_fast_response_valid;
+	logic        grom_refill_launch;
+	logic        grom_refill_write;
+	logic        grom_refill_publish;
 	logic        vram_fast_write;
 
-	// The 68020 fetches instruction words from framework DDR. Thirty-two direct-
-	// mapped 128-byte lines turn sequential fetches and short branch loops into
-	// synchronous embedded-memory hits while keeping the complete 4 MiB ROM in
-	// DDR. Tags stay in flops; only the reset-free 32 Kibit data body is forced
-	// into M10K, following Intel's registered-read template.
-	(* ramstyle = "M10K, no_rw_check" *) logic [63:0] main_read_ahead [0:511];
-	logic [63:0] main_read_ahead_q;
-	logic [21:0] main_front_addr_q;
-	logic        main_front_hit_q;
-	logic [2:0]  main_front_byte_q;
-	logic        main_front_collision_q;
-	logic        main_probe_start;
-	logic        main_probe_enable;
-	logic [21:0] main_probe_addr;
-	logic        main_probe_same_set;
-	logic        main_probe_same_word;
+	// Main-CPU program ROM front (itech32_ddr_main_cache). Hits complete there;
+	// only a miss reaches the scheduler, which owns the 16-beat line refill.
+	logic [21:0] main_front_addr;
 	logic        main_front_cancel;
 	logic        main_miss_scheduler_active;
 	logic        main_miss_pending;
+	logic        main_miss_held;
+	logic        main_refill_launch;
 	logic        main_refill_write;
-	logic        main_refill_same_set;
-	logic        main_refill_same_word;
-	logic [MAIN_CACHE_SETS-1:0] main_read_ahead_valid;
-	logic [MAIN_CACHE_TAG_BITS-1:0] main_read_ahead_tag [0:MAIN_CACHE_SETS-1];
+	logic        main_refill_publish;
+	logic        main_invalidate_all;
 	logic [27:0] main_prefetch_line_q;
 	logic [MAIN_CACHE_TAG_BITS-1:0] main_prefetch_tag_q;
 	logic [MAIN_CACHE_SET_BITS-1:0] main_prefetch_set_q;
 	logic [3:0]  main_prefetch_beat;
 	logic        main_prefetch_discard;
 
-	// The blitter consumes long, sequential raw/RLE byte streams.  A single
-	// 64-bit cache beat made every eighth byte contend with scanout and audio
-	// for a complete random DDR transaction. Keep one 128-byte read-ahead line
-	// in an M10K and fill it with a 16-beat DDR burst. The 32 MiB graphics ROM
-	// remains in framework DDR; only the blitter's immediate sequential working
-	// set occupies embedded memory.
-	(* ramstyle = "M10K, no_rw_check" *) logic [63:0] grom_read_ahead [0:15];
-	logic [63:0] grom_read_ahead_q;
-	logic        grom_read_ahead_valid;
-	logic [18:0] grom_read_ahead_tag;
+	// GROM line refill owned by the scheduler's burst states.
 	logic [27:0] grom_prefetch_line_q;
 	logic [18:0] grom_prefetch_tag_q;
 	logic [3:0]  grom_prefetch_beat;
@@ -341,9 +268,13 @@ module itech32_ddr_memory #(
 	logic [7:0]  vram_fast_be_q;
 	logic        vram_buffer_commit;
 
-	logic [63:0] cache_data [0:4];
-	logic [24:0] cache_tag  [0:4];
-	logic [4:0]  cache_valid;
+	// One-line response caches for the only generic-path readers.
+	logic [63:0] sample_cache_data;
+	logic [24:0] sample_cache_tag;
+	logic        sample_cache_valid;
+	logic [63:0] vram_cache_data;
+	logic [24:0] vram_cache_tag;
+	logic        vram_cache_valid;
 
 	logic        loader_pending;
 	logic [26:0] loader_addr;
@@ -388,14 +319,13 @@ module itech32_ddr_memory #(
 	// The no-conflict request-to-DDR latency and accept timing are unchanged.
 	// Only the conflict decision moves behind the existing address register, so
 	// scanout coordinates no longer cross the scheduler into DDRAM_DIN in one
-	// 100-MHz cycle.
+	// fabric cycle.
 	logic [19:0] scan_addr_q;
 	logic [6:0]  scan_beat;
 	logic        scan_discard;
 
 	integer arb_step;
 	integer arb_index;
-	integer main_tag_index;
 	integer vram_buffer_index;
 	integer vram_byte_index;
 
@@ -449,94 +379,47 @@ module itech32_ddr_memory #(
 		end
 	endfunction
 
-	// Both way reads complete at T1. Extract eight bits per way before the final
-	// select so the response register never sees a 64-bit way mux.
-	assign sound_front_way0_hit = sound_front_valid_q[0] &&
-		sound_cache_way0_q[70:64] == sound_front_addr_q[18:12];
-	assign sound_front_way1_hit = sound_front_valid_q[1] &&
-		sound_cache_way1_q[70:64] == sound_front_addr_q[18:12];
-	assign sound_front_way0_data = line_byte(sound_cache_way0_q[63:0],
-		sound_front_addr_q[2:0]);
-	assign sound_front_way1_data = line_byte(sound_cache_way1_q[63:0],
-		sound_front_addr_q[2:0]);
-	assign sound_cache_hit_touch = !main_front_cancel &&
-		sound_front_state == SF_HIT_RESPONSE && sound_req &&
-		sound_addr == sound_front_addr_q && sound_front_hit_q;
-
 	always_comb begin
 		rom_download_started = !previous_download && ioctl_download &&
 			ioctl_index == 16'h0000;
 		rom_download_finished = previous_download && !ioctl_download &&
 			rom_download_active;
+		// Shared cancel for the main, GROM and sound ROM fronts (the name predates
+		// their extraction and is referenced by the DDR testbenches).
 		main_front_cancel = quiesce || loader_pending || rom_download_active ||
 			rom_download_started || rom_download_finished || download_ended ||
 			clear_active;
 		main_miss_scheduler_active = state == ST_MAIN_BURST_ISSUE ||
 			state == ST_MAIN_BURST_WAIT;
-		main_miss_pending = main_front_state == MF_MISS_WAIT && main_req &&
-			main_addr == main_front_addr_q && !main_front_cancel &&
-			!main_miss_scheduler_active;
-		main_refill_write = state == ST_MAIN_BURST_WAIT && DDRAM_DOUT_READY;
-		main_refill_same_set = main_miss_scheduler_active &&
-			main_prefetch_set_q == main_front_addr_q[11:7];
-		main_refill_same_word = main_refill_write &&
-			{main_prefetch_set_q, main_prefetch_beat} ==
-				{main_front_addr_q[11:7], main_front_addr_q[6:3]};
-		// main_addr is already registered by main_bus. Launch the synchronous
-		// read at acceptance, while capturing the identical request signature.
-		// Refill probes still use the held address after complete publication.
-		main_probe_start = main_req && !main_miss_scheduler_active &&
-			((main_front_state == MF_FREE) ||
-			 (main_front_state == MF_WAIT_RELEASE && main_addr != main_front_addr_q));
-		main_probe_enable = !main_front_cancel && (main_probe_start ||
-			((main_front_state == MF_PROBE || main_front_state == MF_REFILL_PROBE) &&
-			 main_req && main_addr == main_front_addr_q));
-		main_probe_addr = main_probe_start ? main_addr : main_front_addr_q;
-		main_probe_same_set = main_miss_scheduler_active &&
-			main_prefetch_set_q == main_probe_addr[11:7];
-		main_probe_same_word = main_refill_write &&
-			{main_prefetch_set_q, main_prefetch_beat} == main_probe_addr[11:3];
-		grom_front_cancel = main_front_cancel;
 		grom_miss_scheduler_active = state == ST_GROM_BURST_ISSUE ||
 			state == ST_GROM_BURST_WAIT;
-		grom_miss_pending = grom_front_state == GF_MISS_WAIT && grom_req &&
-			grom_addr == grom_front_addr_q && !grom_front_cancel &&
-			!grom_miss_scheduler_active;
-		// A canceled accepted read may still physically complete. Its data/tag
-		// can be written but the entry is not published; reload invalidation is
-		// stronger still. Keep the RAM write-enable path local and narrow.
-		sound_cache_refill = state == ST_WAIT_READ && DDRAM_DOUT_READY &&
+		// A SOUND read beat refills the front's way even if its request has been
+		// cancelled; the front publishes it only while it still owns the miss.
+		// Keep the RAM write-enable path local and narrow.
+		sound_refill = state == ST_WAIT_READ && DDRAM_DOUT_READY &&
 			op_client == CLIENT_SOUND && !reset;
-		sound_cache_publish = !main_front_cancel && !discard_inflight &&
-			sound_front_state == SF_MISS_WAIT && sound_req &&
-			sound_addr == sound_front_addr_q &&
-			op_signature == {20'd0, sound_front_addr_q};
 		// op_client remains latched during independent burst states. Only the
 		// generic command states below actually own a SOUND miss/refill.
 		sound_miss_scheduler_active = op_client == CLIENT_SOUND &&
 			(state == ST_CAPTURE || state == ST_DISPATCH ||
 			 state == ST_LOOKUP_RESULT || state == ST_ISSUE ||
 			 state == ST_WAIT_READ || state == ST_RESPOND);
-		sound_probe_start = !main_front_cancel && sound_req &&
-			!sound_miss_scheduler_active &&
-			(sound_front_state == SF_FREE ||
-			 (sound_front_state == SF_WAIT_RELEASE &&
-			  sound_addr != sound_front_addr_q));
-		sound_miss_pending = sound_front_state == SF_MISS_WAIT && sound_req &&
-			sound_addr == sound_front_addr_q && !main_front_cancel &&
-			!sound_miss_scheduler_active;
+		// The registered response stage completes an owned SOUND miss unless a
+		// reload, quiesce or discard boundary arrived in that pipeline cycle.
+		sound_respond = state == ST_RESPOND && response_clients[CLIENT_SOUND] &&
+			!(quiesce || rom_download_active || rom_download_started ||
+			  rom_download_finished || download_ended || discard_inflight);
+		sound_respond_data = line_byte(response_line, response_byte_index);
 		vram_client_req = vram_qwrite_req || vram_req;
 		vram_client_write = vram_qwrite_req || (vram_req && vram_we);
 		live_vram_signature = vram_qwrite_req
 			? {19'd0, vram_qwrite_token, 1'b1, vram_qwrite_addr}
 			: {vram_we, vram_addr, vram_wdata, vram_be};
 		pending_clients = {
-			vram_client_req && (!served[CLIENT_VRAM] ||
-				served_signature[CLIENT_VRAM] !=
-					live_vram_signature),
-			sample_req && (!served[CLIENT_SAMPLE] ||
-				served_signature[CLIENT_SAMPLE] !=
-				{15'd0, sample_bank, sample_addr}),
+			vram_client_req && (!vram_served ||
+				vram_served_signature != live_vram_signature),
+			sample_req && (!sample_served ||
+				sample_served_signature != {sample_bank, sample_addr}),
 			sound_miss_pending,
 			grom_miss_pending,
 			main_miss_pending
@@ -573,33 +456,19 @@ module itech32_ddr_memory #(
 		capture_cacheable   = 1'b1;
 		capture_sample_empty = 1'b0;
 		capture_signature   = 39'd0;
-		// MAME wraps every ITech32 blitter source byte by the actual
-		// 0x2080000-byte SFTM GROM region. The 26-bit source address cannot
-		// reach twice that size, so one subtract is the exact modulo.
-		grom_effective_addr = (timekill_mode || bloodstorm_mode) ? rev1_grom_offset(grom_addr) :
-			((grom_addr >= 26'h2080000) ? grom_addr - 26'h2080000 : grom_addr);
 		case (op_client)
-			CLIENT_MAIN: begin
-				// The selected grant fixes client ownership while the producer
-				// holds its request and address through the eventual ACK.
-				capture_byte_addr = MAIN_BASE +
-					{6'd0, main_addr[21:2], 2'b00};
-				capture_signature = {17'd0, main_addr};
-			end
 			CLIENT_SOUND: begin
-				capture_byte_addr = SOUND_BASE + {9'd0, sound_front_addr_q};
-				capture_signature = {20'd0, sound_front_addr_q};
+				capture_byte_addr = SOUND_BASE + {9'd0, sound_front_addr};
+				capture_signature = {20'd0, sound_front_addr};
 			end
 			CLIENT_SAMPLE: begin
-				// SAMPLE3_BASE is the existing second populated4MiB slot;
-				// BloodStorm maps its logical bank2 there, not TK's bank2 slot.
-				capture_byte_addr = ((bloodstorm_mode ? sample_bank == 2'd2 :
-					(!timekill_mode && sample_bank == 2'd3)) ?
-					SAMPLE3_BASE : SAMPLE0_BASE)
+				// Slot A is SAMPLE0_BASE and slot B the second populated 4 MiB
+				// slot, SAMPLE3_BASE (BloodStorm's bank 2, SFTM's bank 3).
+				capture_byte_addr = ((sample_slot(profile, sample_bank) ==
+					SAMPLE_SLOT_B) ? SAMPLE3_BASE : SAMPLE0_BASE)
 					+ {6'd0, sample_addr[21:1], 1'b0};
-				capture_sample_empty = bloodstorm_mode ? sample_bank[0] :
-					timekill_mode ? sample_bank != 2'd2 :
-					(sample_bank == 2'd1 || sample_bank == 2'd2);
+				capture_sample_empty =
+					sample_slot(profile, sample_bank) == SAMPLE_EMPTY;
 				capture_signature = {15'd0, sample_bank, sample_addr};
 			end
 			CLIENT_VRAM: begin
@@ -641,13 +510,6 @@ module itech32_ddr_memory #(
 			(scan_addr_q[8:0] != 9'd0 &&
 			 (live_scan_row_index + 18'd1) ==
 				vram_write_buffer_base[27:10]);
-		// Both ROM fronts own hits independently of the shared DDR scheduler.
-		// GROM exposes the synchronous RAM output after its registered probe,
-		// with no extra ACK register. Reload/quiesce synchronously cancel the
-		// board consumer and front owner on the same edge, as in the old path.
-		// Keep that global control tree off the local registered-data response.
-		grom_fast_response_valid = grom_front_state == GF_RESPONSE &&
-			grom_front_hit_q;
 		vram_fast_write = VRAM_WRITE_COMBINE &&
 			pending_clients[CLIENT_VRAM] && vram_client_write &&
 			(vram_fast_pending
@@ -670,33 +532,86 @@ module itech32_ddr_memory #(
 			(op_client == CLIENT_LOADER && state != ST_IDLE);
 	end
 
+	// Main/GROM refill strobes. The selector's grant is computed above, so keep
+	// these in their own block after it.
 	always_comb begin
-		grom_ack = grom_fast_response_valid;
-		grom_rdata = grom_read_ahead_q;
+		// The selector grants an owned main-ROM miss: invalidate its set and
+		// start the burst (see ST_SELECT).
+		main_refill_launch = state == ST_SELECT && selected_valid &&
+			selected_client == CLIENT_MAIN && main_miss_pending &&
+			!(quiesce || loader_pending || rom_download_active ||
+			  rom_download_started || rom_download_finished ||
+			  download_ended || clear_active || scan_req);
+		main_refill_write = state == ST_MAIN_BURST_WAIT && DDRAM_DOUT_READY;
+		main_refill_publish = main_refill_write && main_prefetch_beat == 4'd15 &&
+			!(main_prefetch_discard || quiesce || rom_download_active ||
+			  rom_download_started || rom_download_finished || download_ended);
+		// Download boundaries and completed loader writes forget every line.
+		main_invalidate_all = rom_download_started || rom_download_finished ||
+			(state == ST_WAIT_WRITE && !DDRAM_BUSY && !(write_quiesced || quiesce) &&
+			 op_client == CLIENT_LOADER);
+		// The selector grants an owned GROM miss: invalidate the line and start
+		// its burst (see ST_SELECT).
+		grom_refill_launch = state == ST_SELECT && selected_valid &&
+			selected_client == CLIENT_GROM && grom_miss_pending &&
+			!(quiesce || loader_pending || rom_download_active ||
+			  rom_download_started || rom_download_finished ||
+			  download_ended || clear_active || scan_req);
+		grom_refill_write = state == ST_GROM_BURST_WAIT && DDRAM_DOUT_READY;
+		// Publish the line only after its final beat, and never from an image
+		// that a reload/quiesce boundary has since replaced.
+		grom_refill_publish = grom_refill_write && grom_prefetch_beat == 4'd15 &&
+			!(grom_prefetch_discard || quiesce || rom_download_active ||
+			  rom_download_started || rom_download_finished || download_ended);
 	end
 
-	// Canonical synchronous old-data RAM templates. The single-outstanding SOUND
-	// owner prevents a probe during refill, so no same-edge RDW value is consumed
-	// (asserted below). No reset or bulk clear touches either RAM body.
-	always_ff @(posedge clk) begin
-		if (sound_cache_refill && !sound_front_refill_way_q)
-			sound_cache_way0[op_signature[11:3]] <=
-				{op_signature[18:12], DDRAM_DOUT};
-		if (sound_probe_start)
-			sound_cache_way0_q <= sound_cache_way0[sound_addr[11:3]];
-	end
+	itech32_ddr_main_cache #(
+		.SET_BITS(MAIN_CACHE_SET_BITS), .TAG_BITS(MAIN_CACHE_TAG_BITS)
+	) main_cache (
+		.clk(clk), .reset(reset),
+		.cancel(main_front_cancel), .invalidate_all(main_invalidate_all),
+		.main_req(main_req), .main_addr(main_addr),
+		.main_ack(main_ack), .main_rdata(main_rdata),
+		.miss_scheduler_active(main_miss_scheduler_active),
+		.miss_pending(main_miss_pending), .miss_held(main_miss_held),
+		.front_addr(main_front_addr),
+		.refill_launch(main_refill_launch), .refill_set(main_prefetch_set_q),
+		.refill_beat(main_prefetch_beat), .refill_write(main_refill_write),
+		.refill_data(DDRAM_DOUT), .refill_publish(main_refill_publish),
+		.refill_tag(main_prefetch_tag_q)
+	);
+
+	itech32_ddr_grom_cache grom_cache (
+		.clk(clk), .reset(reset),
+		.cancel(main_front_cancel),
+		.invalidate(rom_download_started || rom_download_finished),
+		.grom_pages(profile.grom_pages),
+		.grom_req(grom_req), .grom_addr(grom_addr),
+		.grom_ack(grom_ack), .grom_rdata(grom_rdata),
+		.miss_scheduler_active(grom_miss_scheduler_active),
+		.miss_pending(grom_miss_pending),
+		.front_effective_addr(grom_front_effective),
+		.refill_launch(grom_refill_launch), .refill_write(grom_refill_write),
+		.refill_beat(grom_prefetch_beat), .refill_data(DDRAM_DOUT),
+		.refill_publish(grom_refill_publish), .refill_tag(grom_prefetch_tag_q)
+	);
+
+	itech32_ddr_sound_cache sound_cache (
+		.clk(clk), .reset(reset),
+		.cancel(main_front_cancel),
+		.invalidate(rom_download_started || rom_download_finished),
+		.sound_req(sound_req), .sound_addr(sound_addr),
+		.sound_ack(sound_ack), .sound_rdata(sound_rdata),
+		.miss_scheduler_active(sound_miss_scheduler_active),
+		.miss_pending(sound_miss_pending), .miss_owned(sound_miss_owned),
+		.front_addr(sound_front_addr),
+		.refill(sound_refill), .refill_signature(op_signature),
+		.refill_data(DDRAM_DOUT), .refill_discard(discard_inflight),
+		.respond(sound_respond), .respond_signature(response_signature),
+		.respond_data(sound_respond_data)
+	);
 
 	always_ff @(posedge clk) begin
-		if (sound_cache_refill && sound_front_refill_way_q)
-			sound_cache_way1[op_signature[11:3]] <=
-				{op_signature[18:12], DDRAM_DOUT};
-		if (sound_probe_start)
-			sound_cache_way1_q <= sound_cache_way1[sound_addr[11:3]];
-	end
-
-	always_ff @(posedge clk) begin
-		main_ack   <= 1'b0;
-		sound_ack  <= 1'b0;
 		sample_ack <= 1'b0;
 		vram_ack   <= 1'b0;
 		vram_qwrite_ack <= 1'b0;
@@ -709,8 +624,8 @@ module itech32_ddr_memory #(
 		if (rom_download_started) begin
 			rom_download_active <= 1'b1;
 			rom_loaded <= 1'b0;
-			cache_valid <= 5'd0;
-			main_read_ahead_valid <= '0;
+			sample_cache_valid <= 1'b0;
+			vram_cache_valid <= 1'b0;
 			download_ended <= 1'b0;
 			vector_line <= 4'd0;
 			clear_active <= 1'b0;
@@ -722,18 +637,15 @@ module itech32_ddr_memory #(
 			// A runtime read accepted before the download may return after
 			// the rising-edge invalidation. Invalidate again at the staging
 			// boundary before reset-vector readback starts.
-			cache_valid <= 5'd0;
-			main_read_ahead_valid <= '0;
+			sample_cache_valid <= 1'b0;
+			vram_cache_valid <= 1'b0;
 		end
 
 		// A held request is one transaction until either req falls or its full
 		// payload changes. This blocks delayed registered producers from being
 		// acknowledged twice, while allowing ES/GROM no-gap next-address reads.
-		if (!main_req)   served[CLIENT_MAIN] <= 1'b0;
-		if (!grom_req)   served[CLIENT_GROM] <= 1'b0;
-		if (!sound_req)  served[CLIENT_SOUND] <= 1'b0;
-		if (!sample_req) served[CLIENT_SAMPLE] <= 1'b0;
-		if (!vram_client_req) served[CLIENT_VRAM] <= 1'b0;
+		if (!sample_req) sample_served <= 1'b0;
+		if (!vram_client_req) vram_served <= 1'b0;
 
 		if (ioctl_download && ioctl_wr && ioctl_index == 16'h0000 && !ioctl_wait) begin
 			loader_pending <= 1'b1;
@@ -744,25 +656,13 @@ module itech32_ddr_memory #(
 
 		if (reset) begin
 			state             <= ST_IDLE;
-			main_front_state  <= MF_FREE;
-			grom_front_state  <= GF_FREE;
-			sound_front_state <= SF_FREE;
-			sound_front_addr_q <= 19'd0;
-			sound_front_data_q <= 8'hff;
-			sound_front_hit_q <= 1'b0;
-			sound_front_hit_way_q <= 1'b0;
-			sound_front_valid_q <= 2'b00;
-			sound_front_victim_q <= 1'b0;
-			sound_front_refill_way_q <= 1'b0;
-			sound_cache_valid_way0 <= '0;
-			sound_cache_valid_way1 <= '0;
 			sound_sample_grants <= 3'd0;
-			served            <= 5'd0;
+			sample_served     <= 1'b0;
+			vram_served       <= 1'b0;
 			rr_client         <= CLIENT_MAIN;
-			grom_front_addr_q <= 26'd0;
-			grom_front_effective_q <= 26'd0;
 			pending_clients_q <= 5'd0;
-			cache_valid       <= 5'd0;
+			sample_cache_valid <= 1'b0;
+			vram_cache_valid <= 1'b0;
 			loader_pending    <= 1'b0;
 			loader_addr       <= 27'd0;
 			loader_data       <= 16'd0;
@@ -817,295 +717,28 @@ module itech32_ddr_memory #(
 			scan_addr_q        <= 20'd0;
 			scan_beat          <= 7'd0;
 			scan_discard       <= 1'b0;
-			served_signature[0] <= 39'd0;
-			served_signature[1] <= 39'd0;
-			served_signature[2] <= 39'd0;
-			served_signature[3] <= 39'd0;
-			served_signature[4] <= 39'd0;
+			sample_served_signature <= 24'd0;
+			vram_served_signature <= 39'd0;
 			DDRAM_ADDR        <= 29'd0;
 			DDRAM_DIN         <= 64'd0;
 			DDRAM_BE          <= 8'd0;
 			DDRAM_RD          <= 1'b0;
 			DDRAM_WE          <= 1'b0;
-			main_rdata        <= 32'hffff_ffff;
-			main_front_addr_q <= 22'd0;
-			main_front_hit_q <= 1'b0;
-			main_front_byte_q <= 3'd0;
-			main_front_collision_q <= 1'b0;
-			main_read_ahead_valid <= '0;
-			for (main_tag_index = 0; main_tag_index < MAIN_CACHE_SETS;
-			     main_tag_index = main_tag_index + 1)
-				main_read_ahead_tag[main_tag_index] <= '0;
 			main_prefetch_line_q <= 28'd0;
 			main_prefetch_tag_q <= '0;
 			main_prefetch_set_q <= '0;
 			main_prefetch_beat <= 4'd0;
 			main_prefetch_discard <= 1'b0;
-			grom_front_hit_q  <= 1'b0;
-			grom_read_ahead_q <= 64'd0;
-			grom_read_ahead_valid <= 1'b0;
-			grom_read_ahead_tag <= 19'd0;
 			grom_prefetch_line_q <= 28'd0;
 			grom_prefetch_tag_q <= 19'd0;
 			grom_prefetch_beat <= 4'd0;
 			grom_prefetch_discard <= 1'b0;
-			sound_rdata       <= 8'hff;
 			sample_rdata      <= 16'd0;
 			vram_rdata        <= 16'd0;
 			scan_rdata        <= 64'd0;
 		end else begin
-			// SOUND hit schedule: synchronous tag/data at T0, compare/extract
-			// at T1, register ACK at T2. This fits before the 6809's next Q edge.
-			// No hit enters pending_clients or consumes a DDR scheduler turn.
-			if (sound_cache_refill) begin
-				if (sound_front_refill_way_q)
-					sound_cache_valid_way1[op_signature[11:3]] <= sound_cache_publish;
-				else
-					sound_cache_valid_way0[op_signature[11:3]] <= sound_cache_publish;
-			end
-			// One metadata write point keeps the replacement decoder narrow. A
-			// successful refill and a resident-hit ACK are mutually exclusive.
-			if (sound_cache_refill && sound_cache_publish)
-				sound_cache_victim[op_signature[11:3]] <=
-					!sound_front_refill_way_q;
-			else if (sound_cache_hit_touch)
-				sound_cache_victim[sound_front_addr_q[11:3]] <=
-					!sound_front_hit_way_q;
 			if (!sound_miss_pending)
 				sound_sample_grants <= 3'd0;
-			if (sound_probe_start) begin
-				sound_front_addr_q <= sound_addr;
-				sound_front_valid_q <= {
-					sound_cache_valid_way1[sound_addr[11:3]],
-					sound_cache_valid_way0[sound_addr[11:3]]
-				};
-				sound_front_victim_q <= sound_cache_victim[sound_addr[11:3]];
-			end
-			if (main_front_cancel) begin
-				if (sound_front_state != SF_WAIT_RELEASE || !sound_req)
-					sound_front_state <= SF_FREE;
-			end else begin
-				case (sound_front_state)
-					SF_FREE, SF_WAIT_RELEASE: begin
-						if (sound_probe_start)
-							sound_front_state <= SF_PROBE_RESULT;
-						else if (!sound_req)
-							sound_front_state <= SF_FREE;
-					end
-					SF_PROBE_RESULT: begin
-						if (!sound_req || sound_addr != sound_front_addr_q) begin
-							sound_front_state <= SF_FREE;
-						end else begin
-							// Way0 wins only the impossible duplicate-tag case; the
-							// assertion below keeps that priority from hiding corruption.
-							sound_front_data_q <= sound_front_way0_hit
-								? sound_front_way0_data : sound_front_way1_data;
-							sound_front_hit_q <= sound_front_way0_hit || sound_front_way1_hit;
-							sound_front_hit_way_q <= !sound_front_way0_hit &&
-								sound_front_way1_hit;
-							if (!sound_front_valid_q[0])
-								sound_front_refill_way_q <= 1'b0;
-							else if (!sound_front_valid_q[1])
-								sound_front_refill_way_q <= 1'b1;
-							else
-								sound_front_refill_way_q <= sound_front_victim_q;
-							sound_front_state <= SF_HIT_RESPONSE;
-						end
-					end
-					SF_HIT_RESPONSE: begin
-						if (!sound_req || sound_addr != sound_front_addr_q) begin
-							sound_front_state <= SF_FREE;
-						end else if (sound_front_hit_q) begin
-							sound_rdata <= sound_front_data_q;
-							sound_ack <= 1'b1;
-							served[CLIENT_SOUND] <= 1'b1;
-							served_signature[CLIENT_SOUND] <= {20'd0, sound_front_addr_q};
-							sound_front_state <= SF_WAIT_RELEASE;
-						end else begin
-							sound_front_state <= SF_MISS_WAIT;
-						end
-					end
-					SF_MISS_WAIT: begin
-						if (!sound_req || sound_addr != sound_front_addr_q)
-							sound_front_state <= SF_FREE;
-					end
-					default: sound_front_state <= SF_FREE;
-				endcase
-			end
-			// The CPU program-ROM cache has one independent, registered owner.
-			// Hits never enter the shared scheduler; only MF_MISS_WAIT is visible
-			// to pending_clients.  The RAM read remains in this same clocked process
-			// as the refill write so Quartus can retain the canonical 1W/1R M10K.
-			if (main_probe_enable) begin
-				main_read_ahead_q <= main_read_ahead[main_probe_addr[11:3]];
-`ifdef VERILATOR
-				// Undefined same-word data must never escape the ownership checks.
-				if (main_probe_same_word)
-					main_read_ahead_q <= 64'hc011_1de5_bad0_cace;
-`endif
-				main_front_hit_q <= main_read_ahead_valid[main_probe_addr[11:7]] &&
-					main_read_ahead_tag[main_probe_addr[11:7]] == main_probe_addr[21:12] &&
-					!main_probe_same_set;
-				main_front_byte_q <= {main_probe_addr[2], 2'b00};
-				main_front_collision_q <= main_probe_same_set;
-			end
-			if (main_front_cancel) begin
-				// Preserve an already-completed signature across a non-reset
-				// boundary. Otherwise a still-held request could be accepted twice
-				// after the boundary clears.
-				if (main_front_state == MF_WAIT_RELEASE) begin
-					if (!main_req)
-						main_front_state <= MF_FREE;
-				end else begin
-					main_front_state <= MF_FREE;
-				end
-			end else begin
-				case (main_front_state)
-					MF_FREE: begin
-						// An accepted burst from a canceled request must drain before
-						// the single-outstanding port can capture another signature.
-						if (main_probe_start) begin
-							main_front_addr_q <= main_addr;
-							main_front_state <= MF_HIT_RESPONSE;
-						end
-					end
-
-					MF_PROBE, MF_REFILL_PROBE: begin
-						if (!main_req || main_addr != main_front_addr_q) begin
-							main_front_state <= MF_FREE;
-						end else begin
-							main_front_state <= main_front_state == MF_PROBE
-								? MF_HIT_RESPONSE : MF_REFILL_RESPONSE;
-						end
-					end
-
-					MF_HIT_RESPONSE: begin
-						if (!main_req || main_addr != main_front_addr_q) begin
-							main_front_state <= MF_FREE;
-						end else if (main_front_hit_q &&
-							main_read_ahead_valid[main_front_addr_q[11:7]] &&
-							main_read_ahead_tag[main_front_addr_q[11:7]] ==
-								main_front_addr_q[21:12] &&
-							!main_front_collision_q && !main_refill_same_set) begin
-							main_rdata <= line_dword_be(main_read_ahead_q,
-								main_front_byte_q);
-							main_ack <= 1'b1;
-							served[CLIENT_MAIN] <= 1'b1;
-							served_signature[CLIENT_MAIN] <=
-								{17'd0, main_front_addr_q};
-							main_front_state <= MF_WAIT_RELEASE;
-						end else begin
-							// Invalidate before any refill word can be published.
-							main_read_ahead_valid[main_front_addr_q[11:7]] <= 1'b0;
-							main_front_state <= MF_MISS_WAIT;
-						end
-					end
-
-					MF_MISS_WAIT: begin
-						// The scheduler case below owns refill launch/completion. A
-						// producer cancellation suppresses its response; an accepted
-						// DDR burst still drains before MF_FREE can accept another.
-						if (!main_req || main_addr != main_front_addr_q)
-							main_front_state <= MF_FREE;
-					end
-
-					MF_REFILL_RESPONSE: begin
-						if (!main_req || main_addr != main_front_addr_q) begin
-							main_front_state <= MF_FREE;
-						end else if (main_front_hit_q &&
-							main_read_ahead_valid[main_front_addr_q[11:7]] &&
-							main_read_ahead_tag[main_front_addr_q[11:7]] ==
-								main_front_addr_q[21:12] &&
-							!main_front_collision_q && !main_refill_same_set) begin
-							main_rdata <= line_dword_be(main_read_ahead_q,
-								main_front_byte_q);
-							main_ack <= 1'b1;
-							served[CLIENT_MAIN] <= 1'b1;
-							served_signature[CLIENT_MAIN] <=
-								{17'd0, main_front_addr_q};
-							main_front_state <= MF_WAIT_RELEASE;
-						end else begin
-							// A failed publication/probe is never acknowledged. Retry
-							// through the existing miss scheduler using the same signature.
-							main_read_ahead_valid[main_front_addr_q[11:7]] <= 1'b0;
-							main_front_state <= MF_MISS_WAIT;
-						end
-					end
-
-					MF_WAIT_RELEASE: begin
-						if (!main_req) begin
-							main_front_state <= MF_FREE;
-						end else if (main_probe_start) begin
-							// The main bus normally supplies a one-cycle low gap, but
-							// the memory interface also supports changed held-high traffic.
-							main_front_addr_q <= main_addr;
-							main_front_state <= MF_HIT_RESPONSE;
-						end
-					end
-
-					default: main_front_state <= MF_FREE;
-				endcase
-			end
-
-			// GROM resident hit schedule: capture at T0, synchronous RAM/tag probe
-			// at T1, local ACK/data during T1..T2, completion at T2. Only a miss
-			// waits for shared arbitration. A refill never overlaps a legal probe
-			// of this single-line cache; first re-probe is after its final write.
-			if (grom_front_cancel) begin
-				if (grom_front_state == GF_WAIT_RELEASE) begin
-					if (!grom_req) grom_front_state <= GF_FREE;
-				end else begin
-					grom_front_state <= GF_FREE;
-				end
-			end else begin
-				case (grom_front_state)
-					GF_FREE: begin
-						if (grom_req && !grom_miss_scheduler_active) begin
-							grom_front_addr_q <= grom_addr;
-							grom_front_effective_q <= grom_effective_addr;
-							grom_front_state <= GF_PROBE;
-						end
-					end
-					GF_PROBE: begin
-						if (!grom_req || grom_addr != grom_front_addr_q) begin
-							grom_front_state <= GF_FREE;
-						end else begin
-							grom_read_ahead_q <=
-								grom_read_ahead[grom_front_effective_q[6:3]];
-							grom_front_hit_q <= grom_read_ahead_valid &&
-								grom_read_ahead_tag == grom_front_effective_q[25:7] &&
-								!grom_miss_scheduler_active;
-							grom_front_state <= GF_RESPONSE;
-						end
-					end
-					GF_RESPONSE: begin
-						if (grom_front_hit_q) begin
-							served[CLIENT_GROM] <= 1'b1;
-							served_signature[CLIENT_GROM] <= {13'd0, grom_front_addr_q};
-							grom_front_state <= GF_WAIT_RELEASE;
-						end else if (!grom_req || grom_addr != grom_front_addr_q) begin
-							grom_front_state <= GF_FREE;
-						end else begin
-							grom_front_state <= GF_MISS_WAIT;
-						end
-					end
-					GF_MISS_WAIT: begin
-						if (!grom_req || grom_addr != grom_front_addr_q)
-							grom_front_state <= GF_FREE;
-					end
-					GF_WAIT_RELEASE: begin
-						if (!grom_req) begin
-							grom_front_state <= GF_FREE;
-						end else if (grom_addr != grom_front_addr_q) begin
-							grom_front_addr_q <= grom_addr;
-							grom_front_effective_q <= grom_effective_addr;
-							grom_front_state <= GF_PROBE;
-						end
-					end
-					default: grom_front_state <= GF_FREE;
-				endcase
-			end
-
 			// Commit only the registered front, never a live producer payload.
 			// Each one-hot bit selects a constant bank/qword; the active drain
 			// bank is immutable even while its DDR beat is stalled. On the first
@@ -1243,8 +876,8 @@ module itech32_ddr_memory #(
 								vram_qwrite_ack <= 1'b1;
 							else
 								vram_ack <= 1'b1;
-							served[CLIENT_VRAM] <= 1'b1;
-							served_signature[CLIENT_VRAM] <= live_vram_signature;
+							vram_served <= 1'b1;
+							vram_served_signature <= live_vram_signature;
 						end else begin
 							vram_fast_pending <= 1'b0;
 						end
@@ -1289,13 +922,13 @@ module itech32_ddr_memory #(
 						vram_fast_select_q <= 32'b1 << {vram_collect_bank, live_vram_buffer_index};
 						vram_fast_data_q <= vram_payload_data;
 						vram_fast_be_q <= vram_payload_be;
-						cache_valid[CLIENT_VRAM] <= 1'b0;
+						vram_cache_valid <= 1'b0;
 						if (vram_qwrite_req)
 							vram_qwrite_ack <= 1'b1;
 						else
 							vram_ack <= 1'b1;
-						served[CLIENT_VRAM] <= 1'b1;
-						served_signature[CLIENT_VRAM] <= live_vram_signature;
+						vram_served <= 1'b1;
+						vram_served_signature <= live_vram_signature;
 					end else begin
 						// Resident hits consume no scheduler turn. Only the owned
 						// main/GROM misses enter the existing registered selector.
@@ -1316,10 +949,10 @@ module itech32_ddr_memory #(
 						rr_client <= next_client(selected_client);
 						if (selected_client == CLIENT_GROM) begin
 							if (grom_miss_pending) begin
+								// grom_cache invalidates its line (grom_refill_launch).
 								grom_prefetch_line_q <= GROM_BASE +
-									{2'd0, grom_front_effective_q[25:7], 7'd0};
-								grom_prefetch_tag_q <= grom_front_effective_q[25:7];
-								grom_read_ahead_valid <= 1'b0;
+									{2'd0, grom_front_effective[25:7], 7'd0};
+								grom_prefetch_tag_q <= grom_front_effective[25:7];
 								grom_prefetch_beat <= 4'd0;
 								grom_prefetch_discard <= 1'b0;
 								state <= ST_GROM_BURST_ISSUE;
@@ -1330,12 +963,11 @@ module itech32_ddr_memory #(
 							// Revalidate the live captured miss because the registered
 							// pending mask may outlive a producer cancellation by one turn.
 							if (main_miss_pending) begin
+								// main_cache invalidates the set (main_refill_launch).
 								main_prefetch_line_q <= MAIN_BASE +
-									{6'd0, main_front_addr_q[21:7], 7'd0};
-								main_prefetch_tag_q <= main_front_addr_q[21:12];
-								main_prefetch_set_q <= main_front_addr_q[11:7];
-								main_read_ahead_valid[main_front_addr_q[11:7]] <=
-									1'b0;
+									{6'd0, main_front_addr[21:7], 7'd0};
+								main_prefetch_tag_q <= main_front_addr[21:12];
+								main_prefetch_set_q <= main_front_addr[11:7];
 								main_prefetch_beat <= 4'd0;
 								main_prefetch_discard <= 1'b0;
 								state <= ST_MAIN_BURST_ISSUE;
@@ -1389,20 +1021,12 @@ module itech32_ddr_memory #(
 					if (quiesce || rom_download_active || rom_download_started ||
 						rom_download_finished || download_ended)
 						grom_prefetch_discard <= 1'b1;
+					// grom_cache stores each beat (grom_refill_write) and publishes
+					// the completed, non-discarded line (grom_refill_publish).
 					if (DDRAM_DOUT_READY) begin
-						grom_read_ahead[grom_prefetch_beat] <= DDRAM_DOUT;
 						if (grom_prefetch_beat == 4'd15) begin
 							DDRAM_RD <= 1'b0;
 							grom_prefetch_beat <= 4'd0;
-							if (!(grom_prefetch_discard || quiesce ||
-								rom_download_active || rom_download_started ||
-								rom_download_finished || download_ended)) begin
-								grom_read_ahead_tag <= grom_prefetch_tag_q;
-								grom_read_ahead_valid <= 1'b1;
-								if (grom_front_state == GF_MISS_WAIT && grom_req &&
-									grom_addr == grom_front_addr_q && !grom_front_cancel)
-									grom_front_state <= GF_PROBE;
-							end
 							grom_prefetch_discard <= 1'b0;
 							state <= ST_IDLE;
 						end else begin
@@ -1414,9 +1038,7 @@ module itech32_ddr_memory #(
 				ST_MAIN_BURST_ISSUE: begin
 					if (quiesce || loader_pending || rom_download_active ||
 						rom_download_started || rom_download_finished ||
-						download_ended || clear_active ||
-						main_front_state != MF_MISS_WAIT || !main_req ||
-						main_addr != main_front_addr_q) begin
+						download_ended || clear_active || !main_miss_held) begin
 						DDRAM_RD <= 1'b0;
 						state <= ST_IDLE;
 					end else if (!DDRAM_BUSY) begin
@@ -1436,22 +1058,12 @@ module itech32_ddr_memory #(
 					if (quiesce || rom_download_active || rom_download_started ||
 						rom_download_finished || download_ended)
 						main_prefetch_discard <= 1'b1;
+					// main_cache stores each beat (main_refill_write) and publishes
+					// the completed, non-discarded line (main_refill_publish).
 					if (DDRAM_DOUT_READY) begin
-						main_read_ahead[{main_prefetch_set_q, main_prefetch_beat}] <=
-							DDRAM_DOUT;
 						if (main_prefetch_beat == 4'd15) begin
 							DDRAM_RD <= 1'b0;
 							main_prefetch_beat <= 4'd0;
-							if (!(main_prefetch_discard || quiesce ||
-								rom_download_active || rom_download_started ||
-								rom_download_finished || download_ended)) begin
-								main_read_ahead_tag[main_prefetch_set_q] <=
-									main_prefetch_tag_q;
-								main_read_ahead_valid[main_prefetch_set_q] <= 1'b1;
-								if (main_front_state == MF_MISS_WAIT && main_req &&
-									main_addr == main_front_addr_q)
-									main_front_state <= MF_REFILL_PROBE;
-							end
 							main_prefetch_discard <= 1'b0;
 							state <= ST_IDLE;
 						end else begin
@@ -1465,9 +1077,7 @@ module itech32_ddr_memory #(
 					// grant. The held producer request will be eligible again.
 					if (quiesce || rom_download_active || rom_download_started ||
 						rom_download_finished || download_ended ||
-						(op_client == CLIENT_SOUND &&
-						 (main_front_cancel || sound_front_state != SF_MISS_WAIT || !sound_req ||
-						  sound_addr != sound_front_addr_q))) begin
+						(op_client == CLIENT_SOUND && !sound_miss_owned)) begin
 						state <= ST_IDLE;
 					end else begin
 						op_write        <= capture_write;
@@ -1515,19 +1125,23 @@ module itech32_ddr_memory #(
 						vram_fast_select_q <= 32'b1 << {vram_collect_bank, op_line_addr[6:3]};
 						vram_fast_data_q <= op_wdata;
 						vram_fast_be_q <= op_be;
-						cache_valid[CLIENT_VRAM] <= 1'b0;
+						vram_cache_valid <= 1'b0;
 						if (op_vram_qwrite)
 							vram_qwrite_ack <= 1'b1;
 						else
 							vram_ack <= 1'b1;
-						served[CLIENT_VRAM] <= 1'b1;
-						served_signature[CLIENT_VRAM] <= op_signature;
+						vram_served <= 1'b1;
+						vram_served_signature <= op_signature;
 						state <= ST_IDLE;
 					end else begin
-						cache_lookup_hit <= op_client != CLIENT_SOUND &&
-							op_cacheable && cache_valid[op_client] &&
-							cache_tag[op_client] == op_line_addr[27:3];
-						response_line <= cache_data[op_client];
+						// Only SAMPLE and VRAM reads reach this generic lookup.
+						cache_lookup_hit <= op_cacheable &&
+							((op_client == CLIENT_SAMPLE && sample_cache_valid &&
+							  sample_cache_tag == op_line_addr[27:3]) ||
+							 (op_client == CLIENT_VRAM && vram_cache_valid &&
+							  vram_cache_tag == op_line_addr[27:3]));
+						response_line <= (op_client == CLIENT_VRAM) ?
+							vram_cache_data : sample_cache_data;
 						response_byte_index <= op_byte_addr[2:0];
 						response_clients <= 5'b00001 << op_client;
 						response_signature <= op_signature;
@@ -1609,7 +1223,7 @@ module itech32_ddr_memory #(
 							download_ended)) begin
 							scan_rdata <= DDRAM_DOUT;
 							scan_data_valid <= 1'b1;
-								scan_last <= scan_beat == 7'(SCAN_BURST_WORDS - 1);
+							scan_last <= scan_beat == 7'(SCAN_BURST_WORDS - 1);
 						end
 						if (scan_beat == 7'(SCAN_BURST_WORDS - 1)) begin
 							scan_beat <= 7'd0;
@@ -1653,9 +1267,12 @@ module itech32_ddr_memory #(
 							(download_ended && op_client != CLIENT_VECTOR)) begin
 							// Any transaction from an older image is discarded at
 							// a reload boundary, including an interrupted vector pass.
-							if (op_client <= CLIENT_VRAM) begin
-								served[op_client] <= 1'b1;
-								served_signature[op_client] <= op_signature;
+							if (op_client == CLIENT_SAMPLE) begin
+								sample_served <= 1'b1;
+								sample_served_signature <= op_signature[23:0];
+							end else if (op_client == CLIENT_VRAM) begin
+								vram_served <= 1'b1;
+								vram_served_signature <= op_signature;
 							end
 							discard_inflight <= 1'b0;
 							state <= ST_IDLE;
@@ -1667,10 +1284,14 @@ module itech32_ddr_memory #(
 							vector_load_we    <= 1'b1;
 							state <= ST_VECTOR_SECOND;
 						end else begin
-							if (op_client != CLIENT_SOUND) begin
-								cache_data[op_client] <= DDRAM_DOUT;
-								cache_tag[op_client] <= op_line_addr[27:3];
-								cache_valid[op_client] <= 1'b1;
+							if (op_client == CLIENT_SAMPLE) begin
+								sample_cache_data <= DDRAM_DOUT;
+								sample_cache_tag <= op_line_addr[27:3];
+								sample_cache_valid <= 1'b1;
+							end else if (op_client == CLIENT_VRAM) begin
+								vram_cache_data <= DDRAM_DOUT;
+								vram_cache_tag <= op_line_addr[27:3];
+								vram_cache_valid <= 1'b1;
 							end
 							response_line <= DDRAM_DOUT;
 							response_byte_index <= op_byte_addr[2:0];
@@ -1689,23 +1310,13 @@ module itech32_ddr_memory #(
 						rom_download_finished || download_ended || discard_inflight) begin
 						state <= ST_IDLE;
 					end else begin
-						if (response_clients[CLIENT_SOUND] && !main_front_cancel && sound_req &&
-							sound_front_state == SF_MISS_WAIT &&
-							{20'd0, sound_front_addr_q} == response_signature &&
-							sound_addr == sound_front_addr_q) begin
-							sound_rdata <= line_byte(response_line,
-								response_byte_index);
-							sound_ack <= 1'b1;
-							served[CLIENT_SOUND] <= 1'b1;
-							served_signature[CLIENT_SOUND] <= response_signature;
-							sound_front_state <= SF_WAIT_RELEASE;
-						end
+						// SOUND completion is issued by sound_cache (sound_respond).
 						if (response_clients[CLIENT_SAMPLE]) begin
 							sample_rdata <= line_word_be(response_line,
 								response_byte_index);
 							sample_ack <= 1'b1;
-							served[CLIENT_SAMPLE] <= 1'b1;
-							served_signature[CLIENT_SAMPLE] <= response_signature;
+							sample_served <= 1'b1;
+							sample_served_signature <= response_signature[23:0];
 						end
 						if (response_clients[CLIENT_VRAM]) begin
 							vram_rdata <= line_word_be(response_line,
@@ -1714,8 +1325,8 @@ module itech32_ddr_memory #(
 								vram_qwrite_ack <= 1'b1;
 							else
 								vram_ack <= 1'b1;
-							served[CLIENT_VRAM] <= 1'b1;
-							served_signature[CLIENT_VRAM] <= response_signature;
+							vram_served <= 1'b1;
+							vram_served_signature <= response_signature;
 						end
 						state <= ST_IDLE;
 					end
@@ -1763,13 +1374,13 @@ module itech32_ddr_memory #(
 						vram_fast_select_q <= 32'b1 << {vram_collect_bank, live_vram_buffer_index};
 						vram_fast_data_q <= vram_payload_data;
 						vram_fast_be_q <= vram_payload_be;
-						cache_valid[CLIENT_VRAM] <= 1'b0;
+						vram_cache_valid <= 1'b0;
 						if (vram_qwrite_req)
 							vram_qwrite_ack <= 1'b1;
 						else
 							vram_ack <= 1'b1;
-						served[CLIENT_VRAM] <= 1'b1;
-						served_signature[CLIENT_VRAM] <= live_vram_signature;
+						vram_served <= 1'b1;
+						vram_served_signature <= live_vram_signature;
 					end
 					// Avalon write bursts keep address/count/WE fixed while each
 					// accepted beat advances only DIN/BE. If framework RESET reaches
@@ -1782,7 +1393,7 @@ module itech32_ddr_memory #(
 							vram_write_burst_count) begin
 							DDRAM_WE <= 1'b0;
 							vram_write_burst_accepted <= 5'd0;
-							cache_valid[CLIENT_VRAM] <= 1'b0;
+							vram_cache_valid <= 1'b0;
 							if (write_quiesced || quiesce) begin
 								write_quiesced <= 1'b0;
 								vram_write_buffer_retry <=
@@ -1818,16 +1429,16 @@ module itech32_ddr_memory #(
 							// Leave loader_pending and clear progress untouched;
 							// a still-live runtime request will be selected again.
 							write_quiesced <= 1'b0;
-							cache_valid[CLIENT_VRAM] <= 1'b0;
+							vram_cache_valid <= 1'b0;
 						end else if (op_client == CLIENT_LOADER) begin
 							loader_pending <= 1'b0;
-						cache_valid <= 5'd0;
-						main_read_ahead_valid <= '0;
+							sample_cache_valid <= 1'b0;
+							vram_cache_valid <= 1'b0;
 						end else if (op_client == CLIENT_CLEAR) begin
 							if (!(rom_download_active || download_ended ||
 								discard_inflight || rom_download_started ||
 								rom_download_finished)) begin
-								cache_valid[CLIENT_VRAM] <= 1'b0;
+								vram_cache_valid <= 1'b0;
 								if (clear_line == CLEAR_LAST) begin
 									clear_line <= '0;
 									clear_active <= 1'b0;
@@ -1841,11 +1452,11 @@ module itech32_ddr_memory #(
 								vram_qwrite_ack <= 1'b1;
 							else
 								vram_ack <= 1'b1;
-							served[CLIENT_VRAM] <= 1'b1;
-							served_signature[CLIENT_VRAM] <= op_signature;
-							if (cache_valid[CLIENT_VRAM] &&
-								cache_tag[CLIENT_VRAM] == op_line_addr[27:3])
-								cache_valid[CLIENT_VRAM] <= 1'b0;
+							vram_served <= 1'b1;
+							vram_served_signature <= op_signature;
+							if (vram_cache_valid &&
+								vram_cache_tag == op_line_addr[27:3])
+								vram_cache_valid <= 1'b0;
 						end
 						state <= ST_IDLE;
 					end
@@ -1862,11 +1473,8 @@ module itech32_ddr_memory #(
 				vector_line <= 4'd0;
 				clear_line <= '0;
 				clear_active <= 1'b0;
-				cache_valid <= 5'd0;
-				sound_cache_valid_way0 <= '0;
-				sound_cache_valid_way1 <= '0;
-				main_read_ahead_valid <= '0;
-				grom_read_ahead_valid <= 1'b0;
+				sample_cache_valid <= 1'b0;
+				vram_cache_valid <= 1'b0;
 				vram_write_buffer_valid <= 1'b0;
 				vram_drain_valid <= 1'b0;
 				vram_write_buffer_retry <= 1'b0;
@@ -1908,170 +1516,31 @@ module itech32_ddr_memory #(
 	end
 
 `ifdef VERILATOR
-	logic sim_sound_ack_q;
-	logic sim_sound_ack_authorized_q;
-	logic sim_sound_completed_valid;
-	logic [18:0] sim_sound_completed_addr;
 	always_ff @(posedge clk) begin
-		if (reset) begin
-			sim_sound_ack_q <= 1'b0;
-			sim_sound_ack_authorized_q <= 1'b0;
-			sim_sound_completed_valid <= 1'b0;
-			sim_sound_completed_addr <= 19'd0;
-		end else begin
-			sim_sound_ack_q <= sound_ack;
-			sim_sound_ack_authorized_q <= !main_front_cancel && sound_req &&
-				sound_addr == sound_front_addr_q &&
-				((sound_front_state == SF_HIT_RESPONSE && sound_front_hit_q) ||
-				 (state == ST_RESPOND && response_clients[CLIENT_SOUND] &&
-				  sound_front_state == SF_MISS_WAIT && !discard_inflight &&
-				  response_signature == {20'd0, sound_front_addr_q}));
-			assert (!(sound_ack && sim_sound_ack_q))
-				else $fatal(1, "SOUND ACK lasted more than one carrier clock");
-			if (!sound_req || sound_addr != sim_sound_completed_addr)
-				sim_sound_completed_valid <= 1'b0;
-			if (sound_ack) begin
-				assert (sim_sound_ack_authorized_q && sound_front_state == SF_WAIT_RELEASE)
-					else $fatal(1, "SOUND ACK lacks matching front ownership");
-				if (sound_req) begin
-					assert (!(sim_sound_completed_valid &&
-						sim_sound_completed_addr == sound_front_addr_q))
-						else $fatal(1, "SOUND request signature acknowledged twice");
-					sim_sound_completed_valid <= 1'b1;
-					sim_sound_completed_addr <= sound_front_addr_q;
-				end
-			end
+		if (!reset) begin
 			assert (!pending_clients[CLIENT_SOUND] || sound_miss_pending)
 				else $fatal(1, "SOUND resident hit reached shared arbitration");
 			assert (sound_sample_grants <= 3'd4)
 				else $fatal(1, "SOUND sample-grant quota overflowed");
-			assert (!(sound_probe_start && sound_cache_refill))
-				else $fatal(1, "SOUND synchronous cache read overlaps refill");
-			assert (!(sound_cache_refill && sound_cache_hit_touch))
-				else $fatal(1, "SOUND cache refill and hit touch overlap");
-			if (sound_front_state == SF_PROBE_RESULT && sound_req &&
-				sound_addr == sound_front_addr_q)
-				assert (!(sound_front_way0_hit && sound_front_way1_hit))
-					else $fatal(1, "SOUND duplicate valid tag across cache ways");
-			if (sound_probe_start)
-				assert (!sound_miss_scheduler_active)
-					else $fatal(1, "SOUND probe overlaps owned refill");
 		end
 	end
-	logic sim_grom_ack_q;
-	logic sim_grom_completed_valid;
-	logic [25:0] sim_grom_completed_addr;
 	logic [28:0] held_ddr_addr;
 	logic [63:0] held_ddr_din;
 	logic [7:0]  held_ddr_be;
 	logic        held_vram_burst_valid;
 	logic [63:0] held_vram_burst_din;
 	logic [7:0]  held_vram_burst_be;
-	logic        sim_main_ack_q;
-	logic        sim_main_ack_authorized_q;
-	logic        sim_main_completed_valid;
-	logic [21:0] sim_main_completed_addr;
-	logic        sim_main_refill_response_q;
-	logic        sim_main_refill_discard_q;
-	logic [MAIN_CACHE_SET_BITS-1:0] sim_main_refill_set_q;
 	always_ff @(posedge clk) begin
 		assert (!(DDRAM_RD && DDRAM_WE))
 			else $fatal(1, "DDRAM read and write asserted together");
-		if (reset) begin
-			sim_grom_ack_q <= 1'b0;
-			sim_grom_completed_valid <= 1'b0;
-			sim_grom_completed_addr <= 26'd0;
-			sim_main_ack_q <= 1'b0;
-			sim_main_ack_authorized_q <= 1'b0;
-			sim_main_completed_valid <= 1'b0;
-			sim_main_completed_addr <= 22'd0;
-			sim_main_refill_response_q <= 1'b0;
-			sim_main_refill_discard_q <= 1'b0;
-			sim_main_refill_set_q <= '0;
-		end else begin
-			assert (!(grom_ack && sim_grom_ack_q))
-				else $fatal(1, "GROM ACK lasted more than one carrier clock");
-			sim_grom_ack_q <= grom_ack;
-			if (!grom_req || grom_addr != sim_grom_completed_addr)
-				sim_grom_completed_valid <= 1'b0;
-			if (grom_ack && !grom_front_cancel) begin
-				assert (grom_read_ahead_valid && !grom_miss_scheduler_active &&
-					grom_read_ahead_tag == grom_front_effective_q[25:7])
-					else $fatal(1, "GROM ACK lacks complete matching cache line");
-				if (grom_req) begin
-					assert (!(sim_grom_completed_valid &&
-						sim_grom_completed_addr == grom_front_addr_q))
-						else $fatal(1, "GROM request signature acknowledged twice");
-					sim_grom_completed_valid <= 1'b1;
-					sim_grom_completed_addr <= grom_front_addr_q;
-				end
-			end
-			if (!grom_front_cancel && grom_front_state == GF_PROBE)
-				assert (!grom_miss_scheduler_active)
-					else $fatal(1, "GROM probe overlaps single-line refill");
+		if (!reset) begin
 			assert (!pending_clients[CLIENT_GROM] || grom_miss_pending)
 				else $fatal(1, "resident GROM hit reached shared scheduler");
 			if (state == ST_CAPTURE || state == ST_DISPATCH ||
 				state == ST_LOOKUP_RESULT || state == ST_RESPOND)
 				assert (op_client != CLIENT_GROM && !response_clients[CLIENT_GROM])
 					else $fatal(1, "GROM request reached generic response path");
-			assert (!(main_ack && sim_main_ack_q))
-				else $fatal(1, "main-ROM ACK lasted more than one carrier clock");
-			sim_main_ack_q <= main_ack;
-			sim_main_ack_authorized_q <= !main_front_cancel && main_req &&
-				main_addr == main_front_addr_q &&
-				(main_front_state == MF_HIT_RESPONSE ||
-				 main_front_state == MF_REFILL_RESPONSE) &&
-				main_front_hit_q &&
-				main_read_ahead_valid[main_front_addr_q[11:7]] &&
-				main_read_ahead_tag[main_front_addr_q[11:7]] ==
-					main_front_addr_q[21:12] &&
-				!main_front_collision_q && !main_refill_same_set;
-
-			if (!main_req) begin
-				sim_main_completed_valid <= 1'b0;
-			end else if (sim_main_completed_valid &&
-				main_addr != sim_main_completed_addr) begin
-				sim_main_completed_valid <= 1'b0;
-			end
-			if (main_ack) begin
-				assert (sim_main_ack_authorized_q &&
-					main_front_state == MF_WAIT_RELEASE && main_front_hit_q &&
-					main_read_ahead_valid[main_front_addr_q[11:7]] &&
-					main_read_ahead_tag[main_front_addr_q[11:7]] ==
-						main_front_addr_q[21:12] &&
-					!main_front_collision_q && !main_refill_same_set)
-					else $fatal(1, "main-ROM ACK lacks matching front-end ownership");
-				if (main_req) begin
-					assert (!(sim_main_completed_valid &&
-						sim_main_completed_addr == main_front_addr_q))
-						else $fatal(1,
-							"main-ROM request signature acknowledged twice");
-					sim_main_completed_valid <= 1'b1;
-					sim_main_completed_addr <= main_front_addr_q;
-				end else begin
-					// Some unit-test producers release at the half-cycle after
-					// sampling ACK. The generation edge was authorized above, but
-					// no held signature remains to suppress.
-					sim_main_completed_valid <= 1'b0;
-				end
-			end
-
-			if (!main_front_cancel && (main_front_state == MF_PROBE ||
-				main_front_state == MF_HIT_RESPONSE ||
-				main_front_state == MF_MISS_WAIT ||
-				main_front_state == MF_REFILL_PROBE ||
-				main_front_state == MF_REFILL_RESPONSE) && main_req) begin
-				assert (main_addr == main_front_addr_q)
-					else $fatal(1,
-						"main-ROM request changed before its ACK/cancel boundary");
-			end
-			assert (!(main_refill_write &&
-				(main_front_state == MF_PROBE ||
-				 main_front_state == MF_REFILL_PROBE)))
-				else $fatal(1, "legal main-ROM probe overlapped its refill write");
-			assert (!pending_clients[CLIENT_MAIN] ||
-				(main_front_state == MF_MISS_WAIT && main_miss_pending))
+			assert (!pending_clients[CLIENT_MAIN] || main_miss_pending)
 				else $fatal(1, "scheduler saw a main-ROM request without miss ownership");
 			if (state == ST_CAPTURE || state == ST_DISPATCH ||
 				state == ST_LOOKUP_RESULT || state == ST_RESPOND) begin
@@ -2079,34 +1548,6 @@ module itech32_ddr_memory #(
 					!response_clients[CLIENT_MAIN])
 					else $fatal(1, "main-ROM request entered generic response path");
 			end
-			if (main_front_state == MF_REFILL_RESPONSE && main_req &&
-				main_addr == main_front_addr_q && !main_front_collision_q) begin
-				assert (main_front_hit_q &&
-					main_read_ahead_valid[main_front_addr_q[11:7]] &&
-					main_read_ahead_tag[main_front_addr_q[11:7]] ==
-						main_front_addr_q[21:12])
-					else $fatal(1, "published main-ROM refill did not re-probe as a hit");
-			end
-
-			if (sim_main_refill_response_q)
-				assert (main_front_state == MF_REFILL_PROBE)
-					else $fatal(1, "published live refill did not enter REFILL_PROBE");
-			if (sim_main_refill_discard_q)
-				assert (!main_read_ahead_valid[sim_main_refill_set_q])
-					else $fatal(1, "discarded main-ROM refill published a valid line");
-			sim_main_refill_response_q <= state == ST_MAIN_BURST_WAIT &&
-				DDRAM_DOUT_READY && main_prefetch_beat == 4'd15 &&
-				!(main_prefetch_discard || quiesce || rom_download_active ||
-					rom_download_started || rom_download_finished || download_ended) &&
-				main_front_state == MF_MISS_WAIT && main_req &&
-				main_addr == main_front_addr_q;
-			sim_main_refill_discard_q <= state == ST_MAIN_BURST_WAIT &&
-				DDRAM_DOUT_READY && main_prefetch_beat == 4'd15 &&
-				(main_prefetch_discard || quiesce || rom_download_active ||
-					rom_download_started || rom_download_finished || download_ended);
-			if (state == ST_MAIN_BURST_WAIT && DDRAM_DOUT_READY &&
-				main_prefetch_beat == 4'd15)
-				sim_main_refill_set_q <= main_prefetch_set_q;
 		end
 		if (!reset) begin
 			assert (!(vram_req && vram_qwrite_req))

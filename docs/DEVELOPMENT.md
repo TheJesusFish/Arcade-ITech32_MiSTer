@@ -6,6 +6,10 @@
   boundary stable during unrelated work. Analog, Direct Video, and the MiSTer
   scaler have different downstream requirements; validating one does not prove
   the others work.
+- The core has one free-running PLL instantiated as `pll pll`, as the template
+  expects. Do not reset or switch it at runtime: hps_io and the DDR interface run
+  on that clock. The palette timing exception in `Arcade-ITech32.sdc` and Time
+  Killers' intensity pipeline assume six carrier clocks per pixel.
 - Registered memory requests must keep their address and payload stable while
   waiting for acknowledgement. Preserve CPU/blitter command ordering and the
   write fence when optimizing internal service time.
@@ -17,11 +21,37 @@
 - Preserve the BloodStorm initial-RAM behavior and game-specific input/maps.
   Test cold initialization as well as reset during an outstanding transaction.
 - Persistent NVRAM reuses the game RAMs' existing synchronous ports during an
-  index-2 transfer. Keep the CPU/sound hold and upload prefetch contract in
-  `docs/NVRAM.md`; do not infer another writer or a third RAM port.
+  index-2 transfer. Keep the CPU/sound hold, the drain-then-grant RAM
+  ownership handshake, and the upload prefetch contract in `docs/NVRAM.md`; do
+  not infer another writer or a third RAM port.
 - Request at most one automatic NVRAM upload per OSD-opening edge. Do not request
   on each dirty transition: BloodStorm stores live work RAM in the persisted
   region and will otherwise retrigger saves continuously while the OSD is open.
+
+## Board Profiles
+
+Every per-game hardware difference lives in `rtl/itech32/itech32_profile_pkg.sv`
+as a field of `board_profile_t`: CPU type, MAME address-map family, input
+layout, palette format, framebuffer planes, sound-board revision and bank count,
+battery-RAM layout, protection address, graphics-ROM size, and the ES5506
+sample-bank map. The MRA writes one selector byte at index 1;
+`itech32_game_selector` registers the matching profile, and each block reads
+only the fields it needs. Blocks must not test game identity.
+
+To add a game:
+
+1. Read its MAME machine configuration and init function, then add a selector
+   value and a profile row in `profile_for_selector`. Reuse existing field
+   values wherever the hardware matches; several game families share one MAME
+   address map.
+2. Only when the game needs a behavior no existing value describes, add a new
+   field value (for example a new `MAP_*`) and implement it where that field is
+   consumed.
+3. Generate MRAs that write the new selector before the ROM stream, then extend
+   the ROM-free tests and the game-selector bench.
+
+Current implementation limits: the graphics-ROM wrap supports 16-127 pages of
+512 KiB, and sample banks map to two physical DDR slots (A and B) or to empty.
 
 ## Verification Scope
 

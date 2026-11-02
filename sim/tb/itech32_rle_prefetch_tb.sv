@@ -84,7 +84,7 @@ module itech32_rle_prefetch_tb;
 	end
 
 	itech32_blitter dut (
-		.clk(clk), .reset(reset), .timekill_mode(1'b0),
+		.clk(clk), .reset(reset), .profile(itech32_profile_tb_pkg::mode_profile(1'b0, 1'b0)),
 		.reg_req(reg_req), .reg_we(reg_we), .reg_addr(reg_addr),
 		.reg_wdata(reg_wdata), .reg_be(reg_be), .reg_ack(reg_ack),
 		.reg_rdata(reg_rdata), .color0_we(color0_we),

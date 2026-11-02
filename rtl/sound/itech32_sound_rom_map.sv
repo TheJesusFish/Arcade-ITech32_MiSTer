@@ -8,7 +8,8 @@
 module itech32_sound_rom_map (
 	input  logic        clk,
 	input  logic        reset,
-	input  logic        rev1_mode,
+	// Highest valid bank-latch value (board profile sound_last_bank).
+	input  logic [7:0]  last_bank,
 
 	// cpu_commit is a single-cycle accepted/committed CPU bus transaction.
 	// cpu_valid remains asserted while a memory read waits for DDR acknowledgement.
@@ -30,8 +31,7 @@ module itech32_sound_rom_map (
 			bank_valid <= 1'b1;
 		end else if (cpu_commit && cpu_write && (cpu_addr == 16'h0c00)) begin
 			sound_bank <= cpu_wdata;
-			bank_valid <= rev1_mode ? (cpu_wdata <= 8'd5) :
-				(cpu_wdata <= 8'd13);
+			bank_valid <= cpu_wdata <= last_bank;
 		end
 	end
 

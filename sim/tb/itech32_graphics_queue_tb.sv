@@ -36,11 +36,11 @@ module itech32_graphics_queue_tb;
     logic [63:0] mdin, mdout = 0;
 
     itech32_board board (
-        .clk(clk), .reset(board_reset), .timekill_mode(1'b0), .bloodstorm_mode(1'b0),
+        .clk(clk), .reset(board_reset), .profile(itech32_profile_tb_pkg::mode_profile_protection(1'b0, 1'b0, 15'd0)),
         .rom_buffer_invalidate(1'b0), .ce_cpu(1'b0), .ce_pixel(1'b0),
         .vector_load_we(1'b0), .vector_load_addr(5'd0), .vector_load_wdata(32'd0), .vector_load_be(4'd0),
         .input_p1('1), .input_p2('1), .input_p3('1), .input_p4('1), .input_dips('1), .input_extra('1),
-        .protection_address(15'd0), .nvram_host_access(1'b0), .nvram_host_write(1'b0),
+        .nvram_host_access(1'b0), .nvram_host_write(1'b0),
         .nvram_host_addr(17'd0), .nvram_host_wdata(16'd0), .auxiliary_irq_level(3'd0),
         .program_rom_ack(1'b0), .program_rom_rdata(32'd0),
         .grom_req(grom_req), .grom_addr(grom_addr), .grom_ack(grom_ack), .grom_rdata(grom_data),
@@ -56,7 +56,7 @@ module itech32_graphics_queue_tb;
     // A single-beat scan consumer makes read-after-completion checks precise.
     // The board raster stays unconfigured; no internal write connection is mocked.
     itech32_ddr_memory #(.VRAM_CLEAR_LINES(8), .VRAM_WRITE_COMBINE(1'b1), .SCAN_BURST_WORDS(1)) memory (
-        .clk(clk), .reset(reset), .timekill_mode(1'b0), .bloodstorm_mode(1'b0),
+        .clk(clk), .reset(reset), .profile(itech32_profile_tb_pkg::mode_profile(1'b0, 1'b0)),
         .quiesce(1'b0),
         .ioctl_download(download), .ioctl_wr(1'b0), .ioctl_index(16'd0),
         .ioctl_addr(27'd0), .ioctl_data(16'd0), .rom_loaded(loaded),

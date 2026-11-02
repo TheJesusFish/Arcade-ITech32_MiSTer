@@ -44,7 +44,7 @@ module itech32_sound_service_tb;
     itech32_ddr_memory #(
         .VRAM_CLEAR_LINES(8), .SCAN_BURST_WORDS(SCAN_BURST_WORDS)
     ) dut (
-        .clk(clk), .reset(reset), .timekill_mode(1'b0), .bloodstorm_mode(1'b0),
+        .clk(clk), .reset(reset), .profile(itech32_profile_tb_pkg::mode_profile(1'b0, 1'b0)),
         .quiesce(quiesce), .ioctl_download(ioctl_download), .ioctl_wr(ioctl_wr),
         .ioctl_index(16'd0), .ioctl_addr(ioctl_addr), .ioctl_data(ioctl_data),
         .ioctl_wait(ioctl_wait), .rom_loaded(rom_loaded),
@@ -498,10 +498,10 @@ module itech32_sound_service_tb;
         assert (sound_ack && sound_rdata == pattern(SOUND_BASE + 28'h20aa0))
             else $fatal(1, "canceled refill escaped instead of resident replacement");
 		assert (sound_reads == before_reads+1 &&
-			!(dut.sound_cache_valid_way0[9'h030] &&
-			  dut.sound_cache_way0[9'h030][70:64] == 7'h33) &&
-			!(dut.sound_cache_valid_way1[9'h030] &&
-			  dut.sound_cache_way1[9'h030][70:64] == 7'h33))
+			!(dut.sound_cache.valid_way0[9'h030] &&
+			  dut.sound_cache.way0[9'h030][70:64] == 7'h33) &&
+			!(dut.sound_cache.valid_way1[9'h030] &&
+			  dut.sound_cache.way1[9'h030][70:64] == 7'h33))
 			else $fatal(1, "canceled refill was published or replacement missed");
 		drop_sound();
 		sound_read(19'h30180, 3); drop_sound();
@@ -548,7 +548,7 @@ module itech32_sound_service_tb;
         no_sound_ack(20);
 		@(negedge clk); sound_req = 0; ioctl_download = 0;
 		wait_loaded();
-		assert (dut.sound_cache_valid_way0 == '0 && dut.sound_cache_valid_way1 == '0)
+		assert (dut.sound_cache.valid_way0 == '0 && dut.sound_cache.valid_way1 == '0)
 			else $fatal(1, "reload left a valid SOUND cache way");
 		sound_read(19'h32120); drop_sound();
 		sound_read(19'h20aa0); drop_sound();
@@ -587,6 +587,6 @@ module itech32_sound_service_tb;
 
     initial begin
         #2ms;
-        $fatal(1, "SOUND_SERVICE watchdog state=%0d front=%0d", dut.state, dut.sound_front_state);
+        $fatal(1, "SOUND_SERVICE watchdog state=%0d front=%0d", dut.state, dut.sound_cache.front_state);
     end
 endmodule

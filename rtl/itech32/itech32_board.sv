@@ -5,14 +5,15 @@
 // memory remain explicit request/ack interfaces for SDRAM/DDR selection above.
 `timescale 1ns/1ps
 
-module itech32_board #(
+module itech32_board
+	import itech32_profile_pkg::*;
+#(
 	parameter integer LINE_PIXELS = 384,
 	parameter integer SCAN_ROW_WORDS = (LINE_PIXELS + 6) / 4
 ) (
 	input  logic        clk,
 	input  logic        reset,
-	input  logic        timekill_mode,
-	input  logic        bloodstorm_mode,
+	input  board_profile_t profile,
 	input  logic        rom_buffer_invalidate,
 	input  logic        ce_cpu,
 	input  logic        ce_pixel,
@@ -29,12 +30,12 @@ module itech32_board #(
 	input  logic [31:0] input_p4,
 	input  logic [31:0] input_dips,
 	input  logic [31:0] input_extra,
-	input  logic [14:0] protection_address,
 	input  logic        nvram_host_access,
 	input  logic        nvram_host_write,
 	input  logic [16:0] nvram_host_addr,
 	input  logic [15:0] nvram_host_wdata,
 	output logic [15:0] nvram_host_rdata,
+	output logic        nvram_host_ready,
 	output logic        nvram_cpu_write,
 
 	// Reserved for sound/board sources owned by another integration block.
@@ -254,7 +255,7 @@ module itech32_board #(
 	assign rgb = palette_rgb;
 
 	itech32_tg68_cpu main_cpu (
-		.clk(clk), .reset(reset), .cpu_68000(timekill_mode || bloodstorm_mode),
+		.clk(clk), .reset(reset), .cpu_68000(profile.cpu_68000),
 		.cpu_ce(ce_cpu), .irq_level(cpu_irq_level),
 		.vector_load_we(vector_load_we), .vector_load_addr(vector_load_addr),
 		.vector_load_wdata(vector_load_wdata), .vector_load_be(vector_load_be),
@@ -303,8 +304,7 @@ module itech32_board #(
 		qwrite_slice_valid;
 
 	itech32_main_bus main_bus (
-		.clk(clk), .reset(reset), .timekill_mode(timekill_mode),
-		.bloodstorm_mode(bloodstorm_mode),
+		.clk(clk), .reset(reset), .profile(profile),
 		.rom_buffer_invalidate(rom_buffer_invalidate),
 		.cpu_req(cpu_req), .cpu_we(cpu_we), .cpu_addr(cpu_addr),
 		.cpu_wdata(cpu_wdata), .cpu_be(cpu_be),
@@ -312,12 +312,12 @@ module itech32_board #(
 		.input_p1(input_p1), .input_p2(input_p2),
 		.input_p3(input_p3), .input_p4(input_p4), .input_dips(input_dips),
 		.input_extra(input_extra),
-		.protection_address(protection_address),
 		.nvram_host_access(nvram_host_access),
 		.nvram_host_write(nvram_host_write),
 		.nvram_host_addr(nvram_host_addr),
 		.nvram_host_wdata(nvram_host_wdata),
 		.nvram_host_rdata(nvram_host_rdata),
+		.nvram_host_ready(nvram_host_ready),
 		.nvram_cpu_write(nvram_cpu_write),
 		.video_req(video_req), .video_we(video_we), .video_addr(video_addr),
 		.video_wdata(video_wdata), .video_be(video_be),
@@ -333,7 +333,7 @@ module itech32_board #(
 	);
 
 	itech32_blitter blitter (
-		.clk(clk), .reset(reset), .timekill_mode(timekill_mode),
+		.clk(clk), .reset(reset), .profile(profile),
 		.reg_req(video_req), .reg_we(video_we), .reg_addr(video_addr),
 		.reg_wdata(video_wdata), .reg_be(video_be),
 		.reg_ack(video_ack), .reg_rdata(video_rdata),
@@ -378,7 +378,7 @@ module itech32_board #(
 	itech32_scanout #(
 		.LINE_PIXELS(LINE_PIXELS), .ROW_WORDS(SCAN_ROW_WORDS)
 	) scanout (
-		.clk(clk), .reset(raster_reset), .timekill_mode(timekill_mode),
+		.clk(clk), .reset(raster_reset), .profile(profile),
 		.ce_pixel(ce_pixel),
 		.hpos(hpos), .vpos(vpos), .hblank(hblank), .vblank(vblank),
 		.htotal(timing_htotal_q), .hblank_end(timing_hblank_end_q),
@@ -454,6 +454,23 @@ module itech32_board #(
 				held_qwrite_slice_valid <= 1'b0;
 			assert (!vram_qwrite_ack || qwrite_slice_valid)
 				else $fatal(1, "DDR acknowledged an empty qwrite slice");
+		end
+	end
+
+	// Arcade-ITech32.sdc gives the scanout-to-palette address path two carrier
+	// clocks, and Time Killers' intensity pipeline (product, quotient, RGB) uses
+	// the remaining clocks before the mixer samples on the next CE_PIXEL. That
+	// budget holds only with at least six carrier clocks per pixel.
+	logic [3:0] sim_ce_pixel_gap = 4'd0;
+	logic       sim_ce_pixel_seen = 1'b0;
+	always_ff @(posedge clk) begin
+		if (ce_pixel) begin
+			assert (!sim_ce_pixel_seen || sim_ce_pixel_gap >= 4'd5)
+				else $fatal(1, "CE_PIXEL closer than six clocks breaks the palette timing budget");
+			sim_ce_pixel_gap <= 4'd0;
+			sim_ce_pixel_seen <= 1'b1;
+		end else if (sim_ce_pixel_gap != 4'hf) begin
+			sim_ce_pixel_gap <= sim_ce_pixel_gap + 4'd1;
 		end
 	end
 `endif

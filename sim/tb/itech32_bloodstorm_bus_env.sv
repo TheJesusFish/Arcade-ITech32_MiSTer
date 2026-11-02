@@ -55,15 +55,15 @@ module itech32_bloodstorm_bus_env #(parameter bit USE_PROGRAM_ROM = 0) (
     endfunction
 
     itech32_main_bus bus (
-        .clk(clk), .reset(reset), .timekill_mode(timekill_mode), .bloodstorm_mode(bloodstorm_mode),
+        .clk(clk), .reset(reset), .profile(itech32_profile_tb_pkg::mode_profile_protection(timekill_mode, bloodstorm_mode, 15'd0)),
         .rom_buffer_invalidate(rom_buffer_invalidate),
         .cpu_req(cpu_req), .cpu_we(cpu_we), .cpu_addr(cpu_addr), .cpu_wdata(cpu_wdata),
         .cpu_be(cpu_be), .cpu_ack(cpu_ack), .cpu_rdata(cpu_rdata),
         .input_p1(input_p1), .input_p2(input_p2), .input_p3(input_p3), .input_p4(input_p4),
-        .input_dips(input_dips), .input_extra(input_extra), .protection_address(15'd0),
+        .input_dips(input_dips), .input_extra(input_extra),
 		.nvram_host_access(1'b0),
 		.nvram_host_write(1'b0), .nvram_host_addr(17'd0),
-		.nvram_host_wdata(16'd0), .nvram_host_rdata(), .nvram_cpu_write(),
+		.nvram_host_wdata(16'd0), .nvram_host_rdata(), .nvram_host_ready(), .nvram_cpu_write(),
         .video_req(video_req), .video_we(video_we), .video_addr(video_addr),
         .video_wdata(video_wdata), .video_be(video_be), .video_ack(video_ack), .video_rdata(video_rdata),
         .rom_req(rom_req), .rom_addr(rom_addr), .rom_ack(rom_ack), .rom_rdata(rom_rdata),
@@ -75,7 +75,7 @@ module itech32_bloodstorm_bus_env #(parameter bit USE_PROGRAM_ROM = 0) (
     );
     logic unused_grom, unused_vram;
     itech32_blitter color_consumer (
-        .clk(clk), .reset(reset), .timekill_mode(timekill_mode),
+        .clk(clk), .reset(reset), .profile(itech32_profile_tb_pkg::mode_profile(timekill_mode, bloodstorm_mode)),
         .reg_req(1'b0), .reg_we(1'b0), .reg_addr(7'd0), .reg_wdata(16'd0), .reg_be(2'd0),
         .reg_ack(), .reg_rdata(), .color0_we(color0_we), .color1_we(color1_we), .color_data(color_data),
         .plane_enable(plane_enable), .grom_bank(grom_bank), .scanline_event(1'b0),

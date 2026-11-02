@@ -36,10 +36,17 @@ class UploadCheckerTests(unittest.TestCase):
         self.assertFalse((self.root / "build_id.v").exists())
         self.assertEqual([], self.check())
 
-    def test_current_qip_all_six_settings(self):
+    def test_reviewed_pll_settings_accepted(self):
+        # The production list has no PLL instance settings since the single
+        # framework-standard `pll` replaced the selectable carriers. The
+        # checker must still accept the reviewed setting forms.
         text = (ROOT / "files.qip").read_text()
-        settings = [line for line in text.splitlines() if line.startswith("set_instance_assignment")]
-        self.assertEqual(6, len(settings))
+        self.assertEqual([], [line for line in text.splitlines()
+                              if line.startswith("set_instance_assignment")])
+        settings = [f'set_instance_assignment -name {name} {value} -to "*example_pll:pll_i*|*"'
+                    for name, value in (("PLL_COMPENSATION_MODE", "DIRECT"),
+                                        ("PLL_AUTO_RESET", "ON"),
+                                        ("PLL_BANDWIDTH_PRESET", "AUTO"))]
         self.put("files.qip", (self.root / "files.qip").read_text() + "\n".join(settings))
         self.assertEqual([], self.check())
 

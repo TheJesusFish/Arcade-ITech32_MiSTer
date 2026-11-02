@@ -35,10 +35,10 @@ always @(posedge clk) begin : qword_arbitration_monitor
             else if(word3) edge_word3++;
             else edge_exceptions++;
         end
-        served_before=dut.served_signature[MEM_CLIENT_SAMPLE];
+        served_before=dut.sample_served_signature;
         sample_data_before=sample_rdata;
         if(qualified)
-            assert(dut.state==MEM_ST_IDLE && dut.served[MEM_CLIENT_SAMPLE] &&
+            assert(dut.state==MEM_ST_IDLE && dut.sample_served &&
                    served_before=={15'd0,sample_bank,sample_addr})
                 else $fatal(1,"AUDIO_QWORD_HELD_SIGNATURE_NOT_PROVEN");
         had_front=dut.vram_fast_pending;
@@ -66,7 +66,7 @@ always @(posedge clk) begin : qword_arbitration_monitor
                    !vram_qwrite_ack && !vram_ack && !sample_ack)
                 else $fatal(1,"AUDIO_QWORD_GRACE_POSTEDGE state=%0d WE=%b qACK=%b",
                     dut.state,core_DDRAM_WE,vram_qwrite_ack);
-            assert(dut.served_signature[MEM_CLIENT_SAMPLE]==served_before &&
+            assert(dut.sample_served_signature==served_before &&
                    sample_rdata==sample_data_before && !dut.vram_fast_pending)
                 else $fatal(1,"AUDIO_QWORD_GRACE_CHANGED_RESPONSE_OR_FRONT");
             if(had_front) assert(commit_front)
@@ -153,7 +153,7 @@ task automatic audio_qword_consume_ack;
         @(posedge clk);
         assert(sample_ack && sample_req &&
                sample_rdata==sample_expected(sample_bank,sample_addr) &&
-               dut.served_signature[MEM_CLIENT_SAMPLE]=={15'd0,sample_bank,sample_addr})
+               dut.sample_served_signature=={15'd0,sample_bank,sample_addr})
             else $fatal(1,"AUDIO_QWORD_EDGE_SAMPLE_DATA_OR_SIGNATURE");
         edge_samples++;
         edge_sample_hash=hash_byte(hash_byte(edge_sample_hash,sample_rdata[15:8]),

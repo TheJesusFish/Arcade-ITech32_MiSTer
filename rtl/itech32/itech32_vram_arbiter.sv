@@ -315,57 +315,6 @@ module itech32_vram_arbiter (
 		end
 	end
 
-`ifdef ITECH32_HW_PROBE
-	wire [FIFO_ADDR_WIDTH:0] hw_fifo_level = fifo_count +
-		{{FIFO_ADDR_WIDTH{1'b0}}, front_valid} +
-		{{FIFO_ADDR_WIDTH{1'b0}}, next_valid} +
-		{{FIFO_ADDR_WIDTH{1'b0}}, read_pending};
-	logic [FIFO_ADDR_WIDTH:0] hw_fifo_high_water = '0;
-	logic [31:0] hw_fifo_full_stall_cycles = 32'd0;
-	logic [31:0] hw_pixel_write_accepts = 32'd0;
-	logic [31:0] hw_qword_write_drains = 32'd0;
-	logic [127:0] hw_fifo_probe = 128'd0;
-	wire [0:0] hw_fifo_source;
-
-	always_ff @(posedge clk) begin
-		if (reset) begin
-			hw_fifo_high_water <= '0;
-			hw_fifo_full_stall_cycles <= 32'd0;
-			hw_pixel_write_accepts <= 32'd0;
-			hw_qword_write_drains <= 32'd0;
-			hw_fifo_probe <= 128'd0;
-		end else begin
-			if (hw_fifo_level > hw_fifo_high_water)
-				hw_fifo_high_water <= hw_fifo_level;
-			if (write_offer && !write_accept)
-				hw_fifo_full_stall_cycles <= hw_fifo_full_stall_cycles + 1'b1;
-			if (write_accept)
-				hw_pixel_write_accepts <= hw_pixel_write_accepts + 1'b1;
-			if (front_pop)
-				hw_qword_write_drains <= hw_qword_write_drains + 1'b1;
-			hw_fifo_probe <= {
-				8'ha8, 8'h03,
-				hw_fifo_level, hw_fifo_high_water,
-				hw_fifo_full_stall_cycles[29:0],
-				hw_pixel_write_accepts, hw_qword_write_drains
-			};
-		end
-	end
-
-	altsource_probe #(
-		.sld_auto_instance_index("YES"),
-		.sld_instance_index(3),
-		.instance_id("IVF"),
-		.probe_width(128),
-		.source_width(1),
-		.source_initial_value("0"),
-		.enable_metastability("NO")
-	) fifoHardwareProbe (
-		.probe(hw_fifo_probe),
-		.source(hw_fifo_source)
-	);
-`endif
-
 `ifndef SYNTHESIS
 	logic        held_write_output_valid;
 	logic [17:0] held_write_output_addr;

@@ -32,6 +32,7 @@ module itech32_nvram_transfer_tb;
 	wire runtime_hold;
 	wire dirty;
 	wire nvram_cpu_write;
+	wire nvram_host_ready;
 	logic [15:0] expected [0:WORDS-1];
 
 	assign hps_bus[45:38] = 8'd0;
@@ -58,6 +59,7 @@ module itech32_nvram_transfer_tb;
 		.ioctl_wr(ioctl_wr), .ioctl_index(ioctl_index),
 		.ioctl_addr(ioctl_addr), .ioctl_dout(ioctl_dout),
 		.cpu_write(nvram_cpu_write), .memory_dout(memory_dout),
+		.memory_ready(nvram_host_ready),
 		.memory_access(memory_access), .memory_write(memory_write),
 		.memory_addr(memory_addr), .memory_din(memory_din),
 		.ioctl_din(ioctl_din), .ioctl_wait(ioctl_wait),
@@ -66,16 +68,16 @@ module itech32_nvram_transfer_tb;
 
 	/* verilator lint_off PINCONNECTEMPTY */
 	itech32_main_bus memory (
-		.clk(clk), .reset(reset), .timekill_mode(1'b0),
-		.bloodstorm_mode(1'b0), .rom_buffer_invalidate(1'b0),
+		.clk(clk), .reset(reset), .profile(itech32_profile_tb_pkg::mode_profile(1'b0, 1'b0)),
+		.rom_buffer_invalidate(1'b0),
 		.cpu_req(1'b0), .cpu_we(1'b0), .cpu_addr(24'd0),
 		.cpu_wdata(32'd0), .cpu_be(4'd0), .cpu_ack(), .cpu_rdata(),
 		.input_p1(32'd0), .input_p2(32'd0), .input_p3(32'd0),
 		.input_p4(32'd0), .input_dips(32'd0), .input_extra(32'd0),
-		.protection_address(15'h7a6a),
 		.nvram_host_access(memory_access), .nvram_host_write(memory_write),
 		.nvram_host_addr(memory_addr), .nvram_host_wdata(memory_din),
-		.nvram_host_rdata(memory_dout), .nvram_cpu_write(nvram_cpu_write),
+		.nvram_host_rdata(memory_dout), .nvram_host_ready(nvram_host_ready),
+		.nvram_cpu_write(nvram_cpu_write),
 		.video_req(), .video_we(), .video_addr(), .video_wdata(),
 		.video_be(), .video_ack(1'b0), .video_rdata(16'd0),
 		.rom_req(), .rom_addr(), .rom_ack(1'b0), .rom_rdata(32'd0),

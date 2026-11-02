@@ -6,7 +6,9 @@
 
 `timescale 1ns/1ps
 
-module itech32_sound_board #(
+module itech32_sound_board
+	import itech32_profile_pkg::*;
+#(
 	parameter integer FIRQ_CLOCK_HZ = 16_000_000,
 	parameter integer FIRQ_RATE_HZ  = 240,
 	parameter integer ES_SLOT_TICKS = 16,
@@ -15,10 +17,12 @@ module itech32_sound_board #(
 ) (
 	input  logic               clk,
 	input  logic               reset,
-	input  logic               rev1_mode,
+	input  board_profile_t     profile,
 	input  logic               ce_8m,
 	input  logic               ce_16m,
 	input  logic               ce_2m,
+	// MiSTer output gain: 0 = 1x, 1 = 2x, 2/3 = 4x (saturating).
+	input  logic [1:0]         audio_gain,
 
 	// Main-CPU command port. MAME accepts every write immediately. If both
 	// latches are pending, a new command replaces latch 2 (newest wins).
@@ -72,6 +76,8 @@ module itech32_sound_board #(
 		BRIDGE_RELEASE
 	} bridge_state_t;
 
+	// Rev-1 sound board: VIA FIRQ, one command latch, latch read at $0400.
+	wire sound_rev1 = profile.sound_rev1;
 	logic [7:0] cpu_rdata;
 	logic       cpu_ready;
 	logic [7:0] cpu_read_data_next;
@@ -157,9 +163,9 @@ module itech32_sound_board #(
 		32'(FIRQ_CLOCK_HZ - FIRQ_RATE_HZ);
 
 	assign main_command_ready = 1'b1;
-	assign command_pending = {rev1_mode ? 1'b0 : pending2, pending1};
-	assign sound_irq = pending1 | (!rev1_mode && pending2);
-	assign sound_firq = rev1_mode ? via_irq : periodic_firq;
+	assign command_pending = {sound_rev1 ? 1'b0 : pending2, pending1};
+	assign sound_irq = pending1 | (!sound_rev1 && pending2);
+	assign sound_firq = sound_rev1 ? via_irq : periodic_firq;
 
 	itech32_es5506_par_pins #(
 		.POT_COMPARE_ACTIVE_HIGH (POT_COMPARE_ACTIVE_HIGH),
@@ -229,7 +235,7 @@ module itech32_sound_board #(
 	assign es_select = cpu_bus_valid_q &&
 	                   (cpu_bus_addr_q[15:8] == 8'h08) &&
 	                   !cpu_bus_addr_q[6];
-	assign via_select = rev1_mode && cpu_bus_valid_q &&
+	assign via_select = sound_rev1 && cpu_bus_valid_q &&
 		(cpu_bus_addr_q[15:4] == 12'h140);
 	assign ram_select = cpu_bus_valid_q &&
 	                    (cpu_bus_addr_q[15:13] == 3'b001);
@@ -257,15 +263,15 @@ module itech32_sound_board #(
 			pending2 <= 1'b0;
 			sound_special <= 1'b0;
 		end else begin
-			if (cpu_read_commit && !rev1_mode && (cpu_bus_addr_q == 16'h0000))
+			if (cpu_read_commit && !sound_rev1 && (cpu_bus_addr_q == 16'h0000))
 				pending1 <= 1'b0;
-			if (cpu_read_commit && rev1_mode && (cpu_bus_addr_q == 16'h0400))
+			if (cpu_read_commit && sound_rev1 && (cpu_bus_addr_q == 16'h0400))
 				pending1 <= 1'b0;
-			if (cpu_read_commit && !rev1_mode && (cpu_bus_addr_q == 16'h0400))
+			if (cpu_read_commit && !sound_rev1 && (cpu_bus_addr_q == 16'h0400))
 				pending2 <= 1'b0;
 
 			if (main_command_valid) begin
-				if (rev1_mode) begin
+				if (sound_rev1) begin
 					command_latch1 <= main_command;
 					pending1 <= 1'b1;
 					pending2 <= 1'b0;
@@ -290,7 +296,7 @@ module itech32_sound_board #(
 			firq_phase <= 32'd0;
 			periodic_firq <= 1'b0;
 		end else begin
-			if (!rev1_mode && ce_16m) begin
+			if (!sound_rev1 && ce_16m) begin
 				if (firq_phase >= FIRQ_PHASE_LIMIT) begin
 					firq_phase <= firq_phase - FIRQ_PHASE_LIMIT;
 					periodic_firq <= 1'b1;
@@ -298,7 +304,7 @@ module itech32_sound_board #(
 					firq_phase <= firq_phase + 32'(FIRQ_RATE_HZ);
 				end
 			end
-			if (!rev1_mode && cpu_write_commit && (cpu_bus_addr_q == 16'h1400))
+			if (!sound_rev1 && cpu_write_commit && (cpu_bus_addr_q == 16'h1400))
 				periodic_firq <= 1'b0;
 		end
 	end
@@ -435,7 +441,7 @@ module itech32_sound_board #(
 	itech32_sound_rom_map rom_map (
 		.clk        (clk),
 		.reset      (reset),
-		.rev1_mode  (rev1_mode),
+		.last_bank  (profile.sound_last_bank),
 		.cpu_commit (cpu_write_commit),
 		.cpu_valid  (cpu_bus_valid_q && !reset),
 		.cpu_addr   (cpu_bus_addr_q),
@@ -508,10 +514,10 @@ module itech32_sound_board #(
 			cpu_read_data_next = via_rdata;
 		end else if (!cpu_bus_write_q) begin
 			case (cpu_bus_addr_q)
-				16'h0000: if (!rev1_mode) cpu_read_data_next = command_latch1;
-				16'h0400: cpu_read_data_next = rev1_mode ? command_latch1 :
+				16'h0000: if (!sound_rev1) cpu_read_data_next = command_latch1;
+				16'h0400: cpu_read_data_next = sound_rev1 ? command_latch1 :
 					command_latch2;
-				16'h1800: if (!rev1_mode)
+				16'h1800: if (!sound_rev1)
 					cpu_read_data_next = {pending1, 7'd0};
 				default: begin
 					// Invalid SFTM banks are deliberately open-bus/zero and do
@@ -568,6 +574,7 @@ module itech32_sound_board #(
 		.es_left      (es_audio_left),
 		.es_right     (es_audio_right),
 		.es_strobe    (es_audio_strobe),
+		.gain         (audio_gain),
 		.audio_left   (audio_left),
 		.audio_right  (audio_right),
 		.audio_strobe (audio_strobe)

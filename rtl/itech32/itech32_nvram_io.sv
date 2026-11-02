@@ -18,6 +18,7 @@ module itech32_nvram_io #(
 	input  logic [15:0] ioctl_dout,
 	input  logic        cpu_write,
 	input  logic [15:0] memory_dout,
+	input  logic        memory_ready,
 	output logic        memory_access,
 	output logic        memory_write,
 	output logic [16:0] memory_addr,
@@ -42,8 +43,12 @@ module itech32_nvram_io #(
 	assign memory_din = ioctl_dout;
 	assign ioctl_din = memory_dout;
 	assign runtime_hold = selected_upload;
+	// The board RAMs switch their read ports to memory_addr only once the main
+	// bus has drained the CPU access it accepted before the upload began
+	// (memory_ready). Count the prefetch delay from that ownership point.
 	assign ioctl_wait = selected_upload &&
-		(!selected_upload_q || upload_address_changed || prefetch_count != 0);
+		(!memory_ready || !selected_upload_q || upload_address_changed ||
+		 prefetch_count != 0);
 
 	always_ff @(posedge clk) begin
 		selected_upload_q <= selected_upload;
@@ -52,14 +57,12 @@ module itech32_nvram_io #(
 			prefetch_count <= COUNT_WIDTH'(PREFETCH_CYCLES);
 			dirty <= 1'b0;
 		end else begin
-			if (!selected_upload) begin
-			upload_addr_q <= ioctl_addr[16:0];
-			prefetch_count <= COUNT_WIDTH'(PREFETCH_CYCLES);
-			end else if (!selected_upload_q || upload_address_changed) begin
-			upload_addr_q <= ioctl_addr[16:0];
-			prefetch_count <= COUNT_WIDTH'(PREFETCH_CYCLES);
+			if (!selected_upload || !memory_ready || !selected_upload_q ||
+				upload_address_changed) begin
+				upload_addr_q <= ioctl_addr[16:0];
+				prefetch_count <= COUNT_WIDTH'(PREFETCH_CYCLES);
 			end else if (prefetch_count != 0) begin
-			prefetch_count <= prefetch_count - 1'b1;
+				prefetch_count <= prefetch_count - 1'b1;
 			end
 
 			// A new board image or an HPS restore owns the complete backing

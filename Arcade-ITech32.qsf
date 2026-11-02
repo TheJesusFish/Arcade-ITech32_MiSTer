@@ -48,15 +48,6 @@ set_global_assignment -name ECO_OPTIMIZE_TIMING ON
 set_global_assignment -name PERIPHERY_TO_CORE_PLACEMENT_AND_ROUTING_OPTIMIZATION ON
 set_global_assignment -name PHYSICAL_SYNTHESIS_ASYNCHRONOUS_SIGNAL_PIPELINING ON
 set_global_assignment -name ALM_REGISTER_PACKING_EFFORT MEDIUM
-# Diagnostic SignalTap/progress counters are intentionally excluded from the
-# production revision: they add wide raster/RGB counter cones and measurable
-# routing congestion. Uncomment only for a dedicated hardware-debug build.
-#set_global_assignment -name VERILOG_MACRO "ITECH32_HW_PROBE=1"
-# Hardware-bisect macros are release-disabled. The normal video path keeps
-# H-scale Off cycle-identical to the proven resync/direct-mixer boundary and
-# selects the registered analog H-scale branch only at a frame boundary.
-#set_global_assignment -name VERILOG_MACRO "ITECH32_DIAG_RESYNC_ONLY=1"
-source scripts/quartus_vendor.tcl
 
 #set_global_assignment -name VERILOG_MACRO "MISTER_FB=1"
 

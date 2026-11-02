@@ -153,7 +153,7 @@ module itech32_ddr_memory_tb;
 	end
 
 	itech32_ddr_memory #(.VRAM_CLEAR_LINES(8)) dut (
-		.clk(clk), .reset(reset), .timekill_mode(timekill_mode), .bloodstorm_mode(1'b0),
+		.clk(clk), .reset(reset), .profile(itech32_profile_tb_pkg::mode_profile(timekill_mode, 1'b0)),
 		.quiesce(quiesce), .quiesce_ack(quiesce_ack),
 		.ioctl_download(ioctl_download), .ioctl_wr(ioctl_wr),
 		.ioctl_index(ioctl_index), .ioctl_addr(ioctl_addr),
@@ -475,20 +475,20 @@ module itech32_ddr_memory_tb;
 		integer transaction_before;
 		integer ack_count;
 		begin
-			while (dut.grom_front_state != 3'd0)
+			while (dut.grom_cache.front_state != 3'd0)
 				@(negedge clk);
 			transaction_before = ddr_transactions;
 			grom_addr = address;
 			grom_req = 1'b1;
 			@(negedge clk);
-			assert (!grom_ack && dut.grom_front_state == 3'd1 &&
-				dut.grom_front_addr_q == address &&
+			assert (!grom_ack && dut.grom_cache.front_state == 3'd1 &&
+				dut.grom_cache.front_addr_q == address &&
 				ddr_transactions == transaction_before)
 				else $fatal(1, "GROM request did not cross local capture boundary");
 			@(negedge clk);
 			assert (grom_ack &&
 				grom_rdata[address[2:0] * 8 +: 8] == expected &&
-				dut.grom_front_state == 3'd2 &&
+				dut.grom_cache.front_state == 3'd2 &&
 				ddr_transactions == transaction_before)
 				else $fatal(1, "GROM hit did not ACK after synchronous local probe");
 			ack_count = 1;
@@ -526,14 +526,14 @@ module itech32_ddr_memory_tb;
 		integer j;
 		logic [25:0] address;
 		begin
-			while(dut.grom_front_state!=3'd0) @(negedge clk);
+			while(dut.grom_cache.front_state!=3'd0) @(negedge clk);
 			transactions_before=ddr_transactions;
 			// Covers all 16 qwords and every low-byte signature with no low gap.
 			for(j=0;j<128;j++) begin
 				address=26'h001200+26'(j);
 				grom_req=1'b1;grom_addr=address;
 				@(negedge clk);
-				assert(!grom_ack && dut.grom_front_state==3'd1)
+				assert(!grom_ack && dut.grom_cache.front_state==3'd1)
 					else $fatal(1,"GROM capture latency changed item=%0d",j);
 				@(negedge clk);
 				assert(grom_ack && grom_rdata==model_line(GROM_BASE+{2'd0,address[25:3],3'b0}))
@@ -625,9 +625,9 @@ module itech32_ddr_memory_tb;
 
 			// Cancel during local probe. No return from canceled ownership.
 			grom_req=1;grom_addr=26'h001208;@(negedge clk);
-			assert(dut.grom_front_state==3'd1) else $fatal(1,"probe cancellation not exercised");
+			assert(dut.grom_cache.front_state==3'd1) else $fatal(1,"probe cancellation not exercised");
 			quiesce=1;@(negedge clk);
-			assert(!grom_ack && dut.grom_front_state==3'd0) else $fatal(1,"probe survived quiesce");
+			assert(!grom_ack && dut.grom_cache.front_state==3'd0) else $fatal(1,"probe survived quiesce");
 			repeat(3) @(negedge clk);
 			quiesce=0;
 			grom_full_read(26'h001208,26'h001208);
@@ -635,9 +635,9 @@ module itech32_ddr_memory_tb;
 			// Cancel at RESPONSE: a pre-edge ACK is ignored by board reset;
 			// no stale ACK may survive that cancel edge or the quiescent span.
 			grom_req=1;grom_addr=26'h001210;@(negedge clk);@(negedge clk);
-			assert(grom_ack && dut.grom_front_state==3'd2) else $fatal(1,"response cancellation not exercised");
+			assert(grom_ack && dut.grom_cache.front_state==3'd2) else $fatal(1,"response cancellation not exercised");
 			quiesce=1;@(negedge clk);
-			assert(!grom_ack && dut.grom_front_state==3'd0) else $fatal(1,"response survived cancel edge");
+			assert(!grom_ack && dut.grom_cache.front_state==3'd0) else $fatal(1,"response survived cancel edge");
 			repeat(3) begin @(negedge clk);assert(!grom_ack) else $fatal(1,"ACK while quiescent");end
 			quiesce=0;grom_full_read(26'h001210,26'h001210);
 
@@ -648,7 +648,7 @@ module itech32_ddr_memory_tb;
 			assert(timeout<3000) else $fatal(1,"refill-last cancellation not exercised");
 			ioctl_download=1;grom_image_epoch=8'h93;
 			@(negedge clk);
-			assert(!grom_ack && !dut.grom_read_ahead_valid) else $fatal(1,"old refill published at reload");
+			assert(!grom_ack && !dut.grom_cache.read_ahead_valid) else $fatal(1,"old refill published at reload");
 			repeat(3) @(negedge clk);
 			ioctl_download=0;timeout=0;
 			while(!rom_loaded && timeout<3000) begin @(negedge clk);timeout++;end
@@ -1610,7 +1610,7 @@ module itech32_ddr_memory_tb;
 		sound_req = 1'b1;
 		while (!(dut.state == MEM_ST_CAPTURE && dut.op_client == 3'd2))
 			@(negedge clk);
-		assert (dut.sound_front_state == SOUND_FRONT_MISS_WAIT && !sound_ack)
+		assert (dut.sound_cache.front_state == SOUND_FRONT_MISS_WAIT && !sound_ack)
 			else $fatal(1, "SOUND capture-boundary request lost miss ownership");
 		framework_reset = 1'b1;
 		quiesce = 1'b1;

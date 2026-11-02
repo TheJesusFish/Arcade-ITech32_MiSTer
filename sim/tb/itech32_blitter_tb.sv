@@ -85,7 +85,7 @@ module itech32_blitter_tb;
 		vram_mem[vram_saved_plane][vram_saved_addr];
 
 	itech32_blitter dut (
-		.clk(clk), .reset(reset), .timekill_mode(timekill_mode),
+		.clk(clk), .reset(reset), .profile(itech32_profile_tb_pkg::mode_profile(timekill_mode, 1'b0)),
 		.reg_req(reg_req), .reg_we(reg_we), .reg_addr(reg_addr),
 		.reg_wdata(reg_wdata), .reg_be(reg_be), .reg_ack(reg_ack), .reg_rdata(reg_rdata),
 		.color0_we(color0_we), .color1_we(color1_we), .color_data(color_data),
@@ -406,6 +406,7 @@ module itech32_blitter_tb;
 
 		// Time Killers uses 512-row planes and different color-latch packing.
 		timekill_mode = 1'b1;
+		#1; // let the derived board profile settle before calling DUT functions
 		expect_value(dut.integer_vram_address(12'h123, 12'h3ff) ==
 			{1'b0, 9'h1ff, 9'h123}, "TK integer VRAM 512-row mask");
 		expect_value(dut.fixed_vram_address(32'sh00012300, 32'sh0003ff00) ==

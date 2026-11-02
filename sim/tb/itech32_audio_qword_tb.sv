@@ -155,7 +155,7 @@ module itech32_audio_qword_tb;
 	itech32_ddr_memory #(
 		.VRAM_CLEAR_LINES(8), .SCAN_BURST_WORDS(SCAN_BURST_WORDS)
 	) dut (
-		.clk(clk), .reset(reset), .timekill_mode(timekill_mode), .bloodstorm_mode(1'b0),
+		.clk(clk), .reset(reset), .profile(itech32_profile_tb_pkg::mode_profile(timekill_mode, 1'b0)),
 		.quiesce(quiesce),
 		.ioctl_download(ioctl_download), .ioctl_wr(ioctl_wr),
 		.ioctl_index(ioctl_index), .ioctl_addr(ioctl_addr),

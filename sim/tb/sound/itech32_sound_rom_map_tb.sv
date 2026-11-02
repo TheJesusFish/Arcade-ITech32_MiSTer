@@ -22,7 +22,7 @@ module itech32_sound_rom_map_tb;
 	itech32_sound_rom_map dut (
 		.clk        (clk),
 		.reset      (reset),
-		.rev1_mode  (rev1_mode),
+		.last_bank  (rev1_mode ? 8'd5 : 8'd13),
 		.cpu_commit (cpu_commit),
 		.cpu_valid  (cpu_valid),
 		.cpu_addr   (cpu_addr),

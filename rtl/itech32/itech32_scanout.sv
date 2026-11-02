@@ -27,13 +27,15 @@ module itech32_line_buffer #(
 endmodule
 /* verilator lint_on DECLFILENAME */
 
-module itech32_scanout #(
+module itech32_scanout
+	import itech32_profile_pkg::*;
+#(
 	parameter integer LINE_PIXELS = 384,
 	parameter integer ROW_WORDS = (LINE_PIXELS + 6) / 4
 ) (
 	input  logic        clk,
 	input  logic        reset,
-	input  logic        timekill_mode,
+	input  board_profile_t profile,
 	input  logic        ce_pixel,
 	input  logic [9:0]  hpos,
 	input  logic [9:0]  vpos,
@@ -72,6 +74,8 @@ module itech32_scanout #(
 );
 
 	localparam integer FETCH_W = (ROW_WORDS <= 2) ? 1 : $clog2(ROW_WORDS);
+	// Time Killers' two 512-row planes, composited per pixel at scanout.
+	wire two_planes = profile.vram_two_planes;
 	localparam logic [9:0] LINE_PIXELS_LIMIT = LINE_PIXELS[9:0];
 	logic        buffer0_valid, buffer1_valid;
 	logic [9:0]  buffer0_vtag, buffer1_vtag;
@@ -200,24 +204,24 @@ module itech32_scanout #(
 		fb_data_valid && !fetch_target && !fetch_plane;
 	assign buffer1_write_enable = fetch_busy && fetch_issued &&
 		fb_data_valid && fetch_target && !fetch_plane;
-	assign buffer0_plane2_write_enable = timekill_mode && fetch_busy && fetch_issued &&
+	assign buffer0_plane2_write_enable = two_planes && fetch_busy && fetch_issued &&
 		fb_data_valid && !fetch_target && fetch_plane;
-	assign buffer1_plane2_write_enable = timekill_mode && fetch_busy && fetch_issued &&
+	assign buffer1_plane2_write_enable = two_planes && fetch_busy && fetch_issued &&
 		fb_data_valid && fetch_target && fetch_plane;
 	// MAME allocates guard rows outside each logical 512x1024 plane and fills
 	// them with logical 16'h00ff. Physical MiSTer VRAM packs the two planes
 	// contiguously, so replace any read-only overfetch beyond the last logical
 	// row before it reaches the line RAM. DDR byte lanes hold each big-endian
 	// framebuffer word swapped, hence logical 00ff is raw ff00 here.
-	assign fetch_aligned_x = timekill_mode && fetch_plane
+	assign fetch_aligned_x = two_planes && fetch_plane
 		? {1'b0, fetch_xorigin2[8:2], 2'b00}
 		: {1'b0, fetch_xorigin[8:2], 2'b00};
-	assign fetch_row = timekill_mode
+	assign fetch_row = two_planes
 		? (fetch_plane ? {1'b0, fetch_y2[8:0]} : {1'b0, fetch_y[8:0]})
 		: (fetch_plane ? fetch_y2 : fetch_y);
 	assign fetch_beat_x = fetch_aligned_x + (10'(fetch_index) << 2);
 	assign fetch_guard_beat =
-		fetch_row == (timekill_mode ? 10'h1ff : 10'h3ff) &&
+		fetch_row == (two_planes ? 10'h1ff : 10'h3ff) &&
 		fetch_beat_x >= 10'd512;
 	assign fetch_write_data = fetch_guard_beat
 		? 64'hff00_ff00_ff00_ff00 : fb_rdata;
@@ -291,41 +295,41 @@ module itech32_scanout #(
 		buffer0_matches_live = buffer0_valid &&
 			buffer0_xorigin == frame_xorigin_q &&
 			buffer0_yorigin == frame_yorigin_q &&
-			(!timekill_mode || (buffer0_xorigin2 == frame_effective_xorigin2 &&
+			(!two_planes || (buffer0_xorigin2 == frame_effective_xorigin2 &&
 			 buffer0_yorigin2 == frame_yorigin2_q &&
 			 buffer0_yscroll2 == frame_yscroll2_q));
 		buffer1_matches_live = buffer1_valid &&
 			buffer1_xorigin == frame_xorigin_q &&
 			buffer1_yorigin == frame_yorigin_q &&
-			(!timekill_mode || (buffer1_xorigin2 == frame_effective_xorigin2 &&
+			(!two_planes || (buffer1_xorigin2 == frame_effective_xorigin2 &&
 			 buffer1_yorigin2 == frame_yorigin2_q &&
 			 buffer1_yscroll2 == frame_yscroll2_q));
 		buffer0_matches_prefetch = buffer0_valid &&
 			buffer0_vtag == prefetch_vtag_q &&
 			buffer0_xorigin == prefetch_xorigin_q &&
 			buffer0_yorigin == prefetch_yorigin_q &&
-			(!timekill_mode || (buffer0_xorigin2 == prefetch_xorigin2_q &&
+			(!two_planes || (buffer0_xorigin2 == prefetch_xorigin2_q &&
 			 buffer0_yorigin2 == prefetch_yorigin2_q &&
 			 buffer0_yscroll2 == prefetch_yscroll2_q));
 		buffer1_matches_prefetch = buffer1_valid &&
 			buffer1_vtag == prefetch_vtag_q &&
 			buffer1_xorigin == prefetch_xorigin_q &&
 			buffer1_yorigin == prefetch_yorigin_q &&
-			(!timekill_mode || (buffer1_xorigin2 == prefetch_xorigin2_q &&
+			(!two_planes || (buffer1_xorigin2 == prefetch_xorigin2_q &&
 			 buffer1_yorigin2 == prefetch_yorigin2_q &&
 			 buffer1_yscroll2 == prefetch_yscroll2_q));
 		buffer0_matches_frame_first = buffer0_valid &&
 			buffer0_vtag == frame_first_vtag_q &&
 			buffer0_xorigin == frame_xorigin_q &&
 			buffer0_yorigin == frame_yorigin_q &&
-			(!timekill_mode || (buffer0_xorigin2 == frame_effective_xorigin2 &&
+			(!two_planes || (buffer0_xorigin2 == frame_effective_xorigin2 &&
 			 buffer0_yorigin2 == frame_yorigin2_q &&
 			 buffer0_yscroll2 == frame_yscroll2_q));
 		buffer1_matches_frame_first = buffer1_valid &&
 			buffer1_vtag == frame_first_vtag_q &&
 			buffer1_xorigin == frame_xorigin_q &&
 			buffer1_yorigin == frame_yorigin_q &&
-			(!timekill_mode || (buffer1_xorigin2 == frame_effective_xorigin2 &&
+			(!two_planes || (buffer1_xorigin2 == frame_effective_xorigin2 &&
 			 buffer1_yorigin2 == frame_yorigin2_q &&
 			 buffer1_yscroll2 == frame_yscroll2_q));
 		current_in_buffer0 = buffer0_matches_live && buffer0_vtag == vpos;
@@ -365,7 +369,7 @@ module itech32_scanout #(
 		// selected 16-bit framebuffer word back to the CPU-visible big-endian form.
 		selected_pixel = {selected_word_raw[7:0], selected_word_raw[15:8]};
 		selected_pixel2 = {selected_word_raw2[7:0], selected_word_raw2[15:8]};
-		if (timekill_mode && selected_pixel[7:0] == 8'hff)
+		if (two_planes && selected_pixel[7:0] == 8'hff)
 			selected_pixel = selected_pixel2;
 		pixel_valid = !hblank && !vblank && display_x < LINE_PIXELS_LIMIT &&
 			display_buffer_valid;
@@ -375,7 +379,7 @@ module itech32_scanout #(
 		// Fetch a qword-aligned 512-pixel linear window beginning at the captured
 		// origin. Only the low two origin bits remain as a line-RAM lane offset.
 		fb_req = fetch_busy && !fetch_issued;
-		if (timekill_mode && fetch_plane)
+		if (two_planes && fetch_plane)
 			fb_addr = {1'b1, fetch_row, fetch_xorigin2[8:2], 2'b00};
 		else
 			fb_addr = {1'b0, fetch_row, fetch_xorigin[8:2], 2'b00};
@@ -614,7 +618,7 @@ module itech32_scanout #(
 				if (fb_last || fetch_index == FETCH_W'(ROW_WORDS - 1)) begin
 					fetch_issued <= 1'b0;
 					fetch_index <= '0;
-					if (timekill_mode && !fetch_plane) begin
+					if (two_planes && !fetch_plane) begin
 						// Plane 0 and plane 1 have independent display origins.  Keep
 						// the line descriptor busy until both synchronous line RAMs hold
 						// the same raster tag, then publish the pair atomically.
@@ -646,126 +650,5 @@ module itech32_scanout #(
 			end
 		end
 	end
-
-`ifdef ITECH32_HW_PROBE
-	// Debug-only, frame-coherent scanout census.  The JTAG probe is asynchronous
-	// to clk, so expose a snapshot captured at vblank entry instead of live
-	// counters that could tear while being read.  This block is omitted from the
-	// release build unless the diagnostic QSF defines ITECH32_HW_PROBE.
-	logic [15:0] hw_frame_counter = 16'd0;
-	logic [15:0] hw_missing_pixels = 16'd0;
-	logic [15:0] hw_fetch_age = 16'd0;
-	logic [15:0] hw_max_fetch_age = 16'd0;
-	logic [15:0] hw_fetch_completions = 16'd0;
-	logic [9:0]  hw_first_miss_hpos = 10'd0;
-	logic [9:0]  hw_first_miss_vpos = 10'd0;
-	logic        hw_miss_seen = 1'b0;
-	logic        hw_previous_vblank = 1'b0;
-	logic [255:0] hw_probe = 256'd0;
-	wire [0:0] hw_source;
-
-	always_ff @(posedge clk) begin
-		if (reset) begin
-			hw_frame_counter    <= 16'd0;
-			hw_missing_pixels   <= 16'd0;
-			hw_fetch_age        <= 16'd0;
-			hw_max_fetch_age    <= 16'd0;
-			hw_fetch_completions <= 16'd0;
-			hw_first_miss_hpos  <= 10'd0;
-			hw_first_miss_vpos  <= 10'd0;
-			hw_miss_seen        <= 1'b0;
-			hw_previous_vblank  <= 1'b0;
-			hw_probe            <= 256'd0;
-		end else begin
-			if (fetch_busy) begin
-				if (hw_fetch_age != 16'hffff)
-					hw_fetch_age <= hw_fetch_age + 1'b1;
-			end else begin
-				hw_fetch_age <= 16'd0;
-			end
-
-			if (fetch_busy && fetch_issued && fb_data_valid && fb_last) begin
-				if (hw_fetch_completions != 16'hffff)
-					hw_fetch_completions <= hw_fetch_completions + 1'b1;
-				if (hw_fetch_age > hw_max_fetch_age)
-					hw_max_fetch_age <= hw_fetch_age;
-			end
-
-			if (ce_pixel && !hblank && !vblank &&
-				display_x < LINE_PIXELS_LIMIT && !display_buffer_valid) begin
-				if (hw_missing_pixels != 16'hffff)
-					hw_missing_pixels <= hw_missing_pixels + 1'b1;
-				if (!hw_miss_seen) begin
-					hw_first_miss_hpos <= hpos;
-					hw_first_miss_vpos <= vpos;
-				end
-				hw_miss_seen <= 1'b1;
-			end
-
-			if (ce_pixel) begin
-				hw_previous_vblank <= vblank;
-				if (vblank && !hw_previous_vblank) begin
-					hw_probe <= {
-						8'ha5,
-						hw_frame_counter,
-						hw_missing_pixels,
-						hw_max_fetch_age,
-						hw_fetch_completions,
-						hw_first_miss_hpos,
-						hw_first_miss_vpos,
-						htotal,
-						hblank_end,
-						vtotal,
-						vblank_start,
-						vblank_end,
-						display_xorigin,
-						buffer0_vtag,
-						buffer1_vtag,
-						fetch_vtag,
-						fetch_y,
-						{{(9-FETCH_W){1'b0}}, fetch_index},
-						palette_addr,
-						pixel_data,
-						underflow,
-						hw_miss_seen,
-						buffer0_valid,
-						buffer1_valid,
-						display_buffer_valid,
-						display_buffer_select,
-						fetch_busy,
-						fetch_target,
-						fb_req,
-						fb_data_valid,
-						pixel_valid,
-						hblank,
-						vblank,
-						ce_pixel,
-						11'd0
-					};
-					hw_frame_counter <= hw_frame_counter + 1'b1;
-					hw_missing_pixels <= 16'd0;
-					hw_max_fetch_age <= 16'd0;
-					hw_fetch_completions <= 16'd0;
-					hw_first_miss_hpos <= 10'd0;
-					hw_first_miss_vpos <= 10'd0;
-					hw_miss_seen <= 1'b0;
-			end
-		end
-	end
-	end
-
-	altsource_probe #(
-		.sld_auto_instance_index("YES"),
-		.sld_instance_index(0),
-		.instance_id("IVD"),
-		.probe_width(256),
-		.source_width(1),
-		.source_initial_value("0"),
-		.enable_metastability("NO")
-	) scanoutHardwareProbe (
-		.probe(hw_probe),
-		.source(hw_source)
-	);
-`endif
 
 endmodule

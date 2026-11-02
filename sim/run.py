@@ -16,7 +16,10 @@ import time
 ROOT = Path(__file__).resolve().parents[1]
 CORE = "rtl/itech32/"
 SOUND = "rtl/sound/"
-MEMORY = ["rtl/memory/itech32_ddr_memory.sv", "sys/f2sdram_safe_terminator.sv"]
+PROFILE = [CORE + "itech32_profile_pkg.sv", "sim/tb/itech32_profile_tb_pkg.sv"]
+MEMORY = ["rtl/memory/itech32_ddr_sound_cache.sv", "rtl/memory/itech32_ddr_grom_cache.sv",
+          "rtl/memory/itech32_ddr_main_cache.sv", "rtl/memory/itech32_ddr_memory.sv",
+          "sys/f2sdram_safe_terminator.sv"]
 ES5506 = [SOUND + "itech32_es5506_par.sv", SOUND + "itech32_es5506.sv"]
 PAR_PINS = [SOUND + "itech32_es5506_par_pins.sv"]
 BLOOD_BUS = [CORE + "itech32_main_bus.sv", CORE + "itech32_blitter.sv",
@@ -38,23 +41,20 @@ def test(top: str, sources: list[str], *, sound: bool = False,
          defines: tuple[str, ...] = (), compiler_args: tuple[str, ...] = (),
          runs: tuple[tuple[str, ...], ...] = ((),)) -> dict:
     folder = "sim/tb/sound/" if sound else "sim/tb/"
-    return {"top": top, "sources": sources + [folder + top + ".sv"],
+    # Every bench may use board profiles; the packages must precede their users.
+    return {"top": top, "sources": PROFILE + sources + [folder + top + ".sv"],
             "defines": defines, "compiler_args": compiler_args, "runs": runs}
 
 
 TESTS = {
     "clocks": test("itech32_clock_enables_tb", [CORE + "itech32_rate_enable.sv",
                                                CORE + "itech32_clock_enables.sv"]),
-	"clocks-mame": test("itech32_clock_enables_mame_tb",
-						 [CORE + "itech32_rate_enable.sv",
-						  CORE + "itech32_clock_enables.sv"]),
-	"clock-mode": test("itech32_clock_mode_control_tb",
-					   [CORE + "itech32_clock_mode_control.sv"]),
 	"game-selector": test("itech32_game_selector_tb", [CORE + "itech32_game_selector.sv"]),
 	"nvram-save-request": test("itech32_nvram_save_request_tb",
 								 [CORE + "itech32_nvram_save_request.sv"]),
 	"nvram-io": test("itech32_nvram_io_tb", [CORE + "itech32_nvram_io.sv"]),
 	"nvram-memory": test("itech32_nvram_memory_tb", [CORE + "itech32_main_bus.sv"]),
+	"nvram-upload-race": test("itech32_nvram_upload_race_tb", [CORE + "itech32_main_bus.sv"]),
 	"nvram-transfer": test("itech32_nvram_transfer_tb", ["sys/hps_io.sv",
 														 CORE + "itech32_nvram_io.sv",
 														 CORE + "itech32_main_bus.sv"],

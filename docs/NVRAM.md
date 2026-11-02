@@ -27,10 +27,23 @@ at the RAM boundary and the ROM-free `nvram-memory` test covers both halves of a
 dword in every board profile.
 
 HPS transfers temporarily own each RAM's existing synchronous port. They do not
-add a second writer or a third inferred port. During upload, `ioctl_wait` remains
-asserted for four carrier clocks after the initial address and every address
-change. This drains a previously accepted CPU write and presents the registered
-RAM word before `hps_io` samples it.
+add a second writer or a third inferred port. Upload freezes both CPUs, but the
+TG68 bus adapter can still present a cycle it captured just before the freeze.
+The main bus therefore:
+
+- stops accepting new CPU accesses while a transfer is active (a waiting cycle
+  completes normally after the upload);
+- finishes every access it accepted before the transfer, using the CPU's own
+  address, and only then hands the RAM read ports to the host
+  (`nvram_host_ready`);
+- routes host *writes* (restore) by the write strobe alone, so a CPU write can
+  never land at the host's address.
+
+`ioctl_wait` stays asserted until `nvram_host_ready`, then for four carrier
+clocks after that grant and after every address change, so `hps_io` always
+samples a registered word from the requested address. Before this handshake an
+access in flight at the start of an upload could read, or for SFTM write, the
+host's address instead of its own.
 
 The dirty flag survives a warm board reset. It clears when a new MRA selector is
 written, a saved image is restored, or an upload begins. The production design
@@ -48,7 +61,10 @@ two-byte validity field changes, and the following reload is clean.
 - `nvram-save-request` checks one-shot OSD-edge saves and specifically rejects
   retriggering when active work RAM becomes dirty again while the OSD is open.
 - `nvram-io` checks dirty transitions, download forwarding, upload ownership,
-  address-change backpressure, and prefetch delay.
+  address-change backpressure, prefetch delay, and waiting for the RAM grant.
+- `nvram-upload-race` drives the real main bus with CPU reads and writes that
+  overlap the start of an upload, for both work-RAM and SFTM backing stores, and
+  checks both the CPU's and the host's data. It fails on the previous design.
 - `nvram-memory` checks HPS-to-CPU and CPU-to-HPS round trips for SFTM,
   Time Killers, and BloodStorm, including size bounds and byte order.
 - Production qualification confirmed that the RAMs remain inferred block RAM,

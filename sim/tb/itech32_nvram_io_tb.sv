@@ -12,6 +12,7 @@ module itech32_nvram_io_tb;
 	logic [15:0] ioctl_dout = 16'd0;
 	logic cpu_write = 1'b0;
 	logic [15:0] memory_dout = 16'd0;
+	logic memory_ready = 1'b1;
 	logic memory_access;
 	logic memory_write;
 	logic [16:0] memory_addr;
@@ -27,7 +28,7 @@ module itech32_nvram_io_tb;
 		.ioctl_download(ioctl_download), .ioctl_upload(ioctl_upload),
 		.ioctl_wr(ioctl_wr), .ioctl_index(ioctl_index),
 		.ioctl_addr(ioctl_addr), .ioctl_dout(ioctl_dout),
-		.cpu_write(cpu_write), .memory_dout(memory_dout),
+		.cpu_write(cpu_write), .memory_dout(memory_dout), .memory_ready(memory_ready),
 		.memory_access(memory_access), .memory_write(memory_write),
 		.memory_addr(memory_addr), .memory_din(memory_din), .ioctl_din(ioctl_din),
 		.ioctl_wait(ioctl_wait), .runtime_hold(runtime_hold), .dirty(dirty)
@@ -94,13 +95,33 @@ module itech32_nvram_io_tb;
 		assert (ioctl_din == 16'he718) else
 			$fatal(1, "NVRAM_UPLOAD_DATA1 got=%04x", ioctl_din);
 
+		// The main bus grants the RAM ports only after its in-flight CPU access
+		// drains. The HPS must keep waiting while ready is low, and the prefetch
+		// delay must be counted from the grant rather than from the address.
+		@(negedge clk);
+		ioctl_upload = 1'b0;
+		@(negedge clk);
+		memory_ready = 1'b0;
+		ioctl_addr = 27'h00060;
+		ioctl_upload = 1'b1;
+		repeat (6) begin
+			@(posedge clk); #1;
+			assert (ioctl_wait) else $fatal(1, "NVRAM_WAIT_DROPPED_BEFORE_READY");
+		end
+		@(negedge clk);
+		memory_ready = 1'b1;
+		#1;
+		wait_for_upload_ready();
+		assert (ioctl_din == 16'hc53a) else
+			$fatal(1, "NVRAM_UPLOAD_DATA_AFTER_READY got=%04x", ioctl_din);
+
 		@(negedge clk);
 		ioctl_upload = 1'b0;
 		ioctl_index = 16'h0000;
 		#1;
 		assert (!runtime_hold && !ioctl_wait && !memory_access && !memory_write)
 			else $fatal(1, "NVRAM_IDLE_OUTPUTS");
-		$display("NVRAM_IO_PASS prefetch_cycles=4 dirty_and_transfer=ok");
+		$display("NVRAM_IO_PASS prefetch_cycles=4 dirty_and_transfer=ok ready_gate=ok");
 		$finish;
 	end
 endmodule

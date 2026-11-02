@@ -11,6 +11,8 @@ module itech32_bloodstorm_inputs_tb;
     logic [31:0] input_p1, input_p2, input_p3, input_p4, input_dips, input_extra;
     integer checks = 0;
     integer negative_kind = 0;
+    itech32_profile_pkg::board_profile_t profile;
+    assign profile = itech32_profile_tb_pkg::mode_profile(timekill_mode, bloodstorm_mode);
     itech32_inputs dut (.*);
     always #5 clk = ~clk;
 

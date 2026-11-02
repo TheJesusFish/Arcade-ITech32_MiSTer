@@ -12,7 +12,9 @@ module itech32_work_ram (
 	input  logic [31:0] write_data,
 	input  logic [13:0] read_addr,
 	output logic [31:0] read_data,
-	input  logic        host_access,
+	// The HPS owns the read port only once the main bus has drained (see
+	// nvram_host_owner_q). Host writes select the write port directly.
+	input  logic        host_owner,
 	input  logic        host_write_enable,
 	input  logic [15:0] host_addr,
 	input  logic [15:0] host_write_data,
@@ -21,7 +23,7 @@ module itech32_work_ram (
 	// Quartus 17 does not infer byte enables from a loop over a 32-bit array
 	// in this mixed-language hierarchy.  Four byte-wide banks make the four
 	// physical write enables explicit and still present one 32-bit read word.
-	// BloodStorm needs a physical64KiB aperture, not an A15 alias. Preserve
+	// BloodStorm needs a physical 64 KiB aperture, not an A15 alias. Preserve
 	// the qualified synchronous byte-bank template and its read/ACK schedule.
 	(* ramstyle = "M10K, no_rw_check" *) logic [7:0] memory_lane0 [0:16383];
 	(* ramstyle = "M10K, no_rw_check" *) logic [7:0] memory_lane1 [0:16383];
@@ -29,12 +31,15 @@ module itech32_work_ram (
 	(* ramstyle = "M10K, no_rw_check" *) logic [7:0] memory_lane3 [0:16383];
 
 	// Configuration-time contents only: MAME's all-zero BloodStorm NVRAM
-	// reproduces the invalid stock-score table; FF in byte8000..FFFF makes
-	// the game's own ROM install its defaults (native cure54F5529D).
-	// This upper32KiB is outside both SFTM's and Time Killers' RAM maps.
+	// reproduces the invalid stock-score table; FF in bytes 8000..FFFF makes
+	// the game's own ROM install its defaults.
+	// This upper 32 KiB is outside both SFTM's and Time Killers' RAM maps.
 	// Keep the lower region and the clocked RAM template below unchanged.
-	// Two4096-word blocks stay below Quartus17's5000-iteration loop limit.
+	// Two 4096-word blocks stay below Quartus 17's 5000-iteration loop limit.
 	// These constants become M10K initialization bits, not a runtime clear.
+	// The RAM process below is a plain `always` rather than `always_ff`:
+	// strict SystemVerilog tools reject an always_ff variable that an initial
+	// block also drives. Synthesis is identical.
 	initial begin : bloodstorm_powerup_contents
 		integer block_index;
 		integer word_index;
@@ -49,8 +54,8 @@ module itech32_work_ram (
 	end
 
 	wire [13:0] port_a_addr = host_write_enable ? host_addr[15:2] : write_addr;
-	wire [13:0] read_port_addr = host_access ? host_addr[15:2] : read_addr;
-	always_ff @(posedge clk) begin
+	wire [13:0] read_port_addr = host_owner ? host_addr[15:2] : read_addr;
+	always @(posedge clk) begin
 		if (host_write_enable) begin
 			if (!host_addr[1]) begin
 				memory_lane3[port_a_addr] <= host_write_data[7:0];
@@ -142,14 +147,16 @@ module itech32_bus_byte_ram_sp (
 	input  logic [14:0] addr,
 	input  logic [7:0]  write_data,
 	output logic [7:0]  read_data,
-	input  logic        host_access,
+	// Host writes take the port directly; host reads only once the main bus
+	// has drained, so an accepted CPU access always uses its own address.
+	input  logic        host_owner,
 	input  logic        host_write_enable,
 	input  logic [14:0] host_addr,
 	input  logic [7:0]  host_write_data,
 	output logic [7:0]  host_read_data
 );
 	(* ramstyle = "M10K, no_rw_check" *) logic [7:0] memory [0:32767];
-	wire [14:0] port_a_addr = host_access ? host_addr : addr;
+	wire [14:0] port_a_addr = (host_write_enable || host_owner) ? host_addr : addr;
 
 	always_ff @(posedge clk) begin
 		if (host_write_enable)
@@ -162,11 +169,12 @@ module itech32_bus_byte_ram_sp (
 endmodule
 /* verilator lint_on DECLFILENAME */
 
-module itech32_main_bus (
+module itech32_main_bus
+	import itech32_profile_pkg::*;
+(
 	input  logic        clk,
 	input  logic        reset,
-	input  logic        timekill_mode,
-	input  logic        bloodstorm_mode,
+	input  board_profile_t profile,
 	input  logic        rom_buffer_invalidate,
 	input  logic        cpu_req,
 	input  logic        cpu_we,
@@ -182,12 +190,13 @@ module itech32_main_bus (
 	input  logic [31:0] input_p4,
 	input  logic [31:0] input_dips,
 	input  logic [31:0] input_extra,
-	input  logic [14:0] protection_address,
 	input  logic        nvram_host_access,
 	input  logic        nvram_host_write,
 	input  logic [16:0] nvram_host_addr,
 	input  logic [15:0] nvram_host_wdata,
 	output logic [15:0] nvram_host_rdata,
+	// High once an index-2 transfer owns the RAM read ports (bus drained).
+	output logic        nvram_host_ready,
 	output logic        nvram_cpu_write,
 
 	output logic        video_req,
@@ -254,13 +263,17 @@ module itech32_main_bus (
 	logic [3:0]  main_ram_write_be;
 	logic [31:0] main_ram_write_data;
 	logic        work_ram_host_write;
-	logic        sftm_nvram_host_write;
+	logic        dedicated_nvram_host_write;
 	logic        bus_held;
 	logic        bus_pending;
 	logic        bus_we_q;
 	logic [16:1] bus_addr_q;
 	logic [31:0] bus_wdata_q;
 	logic [3:0]  bus_be_q;
+	// (a) The index-2 transfer owns the shared RAM read ports. Set only once
+	// every CPU access accepted before the transfer has completed; cleared one
+	// edge after the transfer ends.
+	logic        nvram_host_owner_q = 1'b0;
 
 	// Classify a request when the request payload enters the existing boundary
 	// registers.  The response cycle then selects from this small tag instead of
@@ -299,6 +312,14 @@ module itech32_main_bus (
 	bus_target_t bus_target_q;
 	bus_target_t accept_target;
 
+	// Address-map family (MAME's itech020/timekill/bloodstm maps). Several game
+	// families share a map; other per-board differences are separate profile
+	// fields. MAP_* codes equal the former {bloodstorm, timekill} pair, so the
+	// ROM-buffer tag bits are unchanged.
+	wire map_timekill   = profile.memory_map == MAP_TIMEKILL;
+	wire map_bloodstorm = profile.memory_map == MAP_BLOODSTORM;
+	wire map_68000      = map_timekill || map_bloodstorm;
+
 	// (a) Retain one complete, immutable ROM response across bus transactions.
 	// This is a board-side response buffer, not a modeled 68020 instruction cache.
 	// Tag the raw aligned board address plus game mode; both halfwords and all
@@ -316,12 +337,19 @@ module itech32_main_bus (
 	// (a) Detect mode changes even when a standalone board has no loader signal.
 	logic [1:0]  rom_buffer_previous_mode_q;
 	wire rom_buffer_cancel = rom_buffer_invalidate ||
-		({bloodstorm_mode, timekill_mode} != rom_buffer_previous_mode_q);
-	wire bus_accept = cpu_req && !bus_held && !bus_pending &&
-		!main_ram_read_pending && !palette_read_pending && !nvram_read_pending;
+		(profile.memory_map != rom_buffer_previous_mode_q);
+	wire bus_idle = !bus_pending && !main_ram_read_pending &&
+		!palette_read_pending && !nvram_read_pending;
+	// runtime_hold stops the CPU from starting new cycles, but the TG68 adapter
+	// still presents a cycle it captured just before an upload began. Leave that
+	// request unaccepted (and unacknowledged) until the transfer has released
+	// the RAM ports, so it can never be served from or written to the host's
+	// address. The owner term covers the edge after the transfer ends.
+	wire nvram_host_hold = nvram_host_access || nvram_host_owner_q;
+	wire bus_accept = cpu_req && !bus_held && bus_idle && !nvram_host_hold;
 	wire rom_buffer_hit = rom_buffer_valid_q && !rom_buffer_cancel &&
 		(accept_target == TARGET_ROM) &&
-		(rom_buffer_tag_q == {bloodstorm_mode, timekill_mode, cpu_addr[23:2]});
+		(rom_buffer_tag_q == {profile.memory_map, cpu_addr[23:2]});
 
 	function automatic logic [7:0] select_addressed_byte(
 		input logic [31:0] word_value,
@@ -355,15 +383,15 @@ module itech32_main_bus (
 	function automatic bus_target_t decode_bus_target(
 		input logic        write_cycle,
 		input logic [23:0] address,
-		input logic        is_timekill,
-		input logic        is_bloodstorm
+		input logic [1:0]  memory_map
 	);
 		begin
 			// Capture the board-specific open-read policy in the existing tag.
 			// MAME's itech020_map uses zero for unhandled SFTM reads; the ROM's
 			// 0x041107 probe relies on it. Keep the Time Killers map unchanged.
-			decode_bus_target = (is_timekill || is_bloodstorm) ? TARGET_UNMAPPED : TARGET_SFTM_UNMAPPED;
-			if (is_timekill) begin
+			decode_bus_target = (memory_map == MAP_TIMEKILL ||
+				memory_map == MAP_BLOODSTORM) ? TARGET_UNMAPPED : TARGET_SFTM_UNMAPPED;
+			if (memory_map == MAP_TIMEKILL) begin
 				if (address < 24'h004000)
 					decode_bus_target = TARGET_MAIN_RAM;
 				else if (!write_cycle && address >= 24'h040000 && address <= 24'h040001)
@@ -395,7 +423,7 @@ module itech32_main_bus (
 					decode_bus_target = TARGET_PALETTE;
 				else if (!write_cycle && address >= 24'h100000 && address <= 24'h17ffff)
 					decode_bus_target = TARGET_ROM;
-			end else if (is_bloodstorm) begin
+			end else if (memory_map == MAP_BLOODSTORM) begin
 				if (address < 24'h010000)
 					decode_bus_target = TARGET_MAIN_RAM;
 				else if (address >= 24'h080000 && address <= 24'h080001)
@@ -468,7 +496,7 @@ module itech32_main_bus (
 		end
 	endfunction
 
-	assign accept_target = decode_bus_target(cpu_we, cpu_addr, timekill_mode, bloodstorm_mode);
+	assign accept_target = decode_bus_target(cpu_we, cpu_addr, profile.memory_map);
 	// Ordinary work-RAM reads use the adapter's already-registered accepted
 	// address for the synchronous probe, then the existing pending response
 	// register. Protection, palette, NVRAM and writes keep their old schedule.
@@ -479,7 +507,7 @@ module itech32_main_bus (
 	// Invalidation cancels allocation, not delivery of an already-owned response.
 	// No live address/mode or unowned ACK is used to allocate a completed miss.
 	always_ff @(posedge clk) begin
-		rom_buffer_previous_mode_q <= {bloodstorm_mode, timekill_mode};
+		rom_buffer_previous_mode_q <= profile.memory_map;
 		if (reset) begin
 			rom_buffer_valid_q <= 1'b0;
 			rom_buffer_pending_cancel_q <= 1'b0;
@@ -489,7 +517,7 @@ module itech32_main_bus (
 				rom_buffer_pending_cancel_q <= 1'b1;
 			end
 			if (bus_accept && (accept_target == TARGET_ROM) && !rom_buffer_hit) begin
-				rom_buffer_pending_tag_hi_q <= {bloodstorm_mode, timekill_mode, cpu_addr[23:17]};
+				rom_buffer_pending_tag_hi_q <= {profile.memory_map, cpu_addr[23:17]};
 				rom_buffer_pending_cancel_q <= rom_buffer_cancel;
 			end
 			if (bus_pending && (bus_target_q == TARGET_ROM) && rom_req && rom_ack &&
@@ -501,6 +529,12 @@ module itech32_main_bus (
 		end
 	end
 
+	// No reset term: board reset clears the pending flags, so bus_idle already
+	// lets a transfer that overlaps reset (an index-2 restore) take ownership.
+	always_ff @(posedge clk)
+		nvram_host_owner_q <= nvram_host_access && (nvram_host_owner_q || bus_idle);
+	assign nvram_host_ready = nvram_host_owner_q;
+
 	// Keep the main work RAM to one synchronous read port and one byte-enabled
 	// write port.  Besides matching a real memory's latency, this form infers
 	// Cyclone V block RAM; selecting main/protection addresses inside the bus
@@ -509,7 +543,7 @@ module itech32_main_bus (
 		if (main_ram_accept_read)
 			main_ram_read_addr = cpu_addr[15:2];
 		else if (bus_target_q == TARGET_PROTECTION_READ)
-			main_ram_read_addr = {1'b0, protection_address[14:2]};
+			main_ram_read_addr = {1'b0, profile.protection_address[14:2]};
 		else
 			main_ram_read_addr = bus_addr_q[15:2];
 
@@ -526,7 +560,7 @@ module itech32_main_bus (
 		.write_be(main_ram_write_be), .write_addr(main_ram_write_addr),
 		.write_data(main_ram_write_data), .read_addr(main_ram_read_addr),
 		.read_data(main_ram_read_data),
-		.host_access(nvram_host_access),
+		.host_owner(nvram_host_owner_q),
 		.host_write_enable(work_ram_host_write),
 		.host_addr(nvram_host_addr[15:0]),
 		.host_write_data(nvram_host_wdata),
@@ -545,7 +579,8 @@ module itech32_main_bus (
 	always_comb begin
 		palette_write_be = bus_be_q;
 		palette_write_data = bus_wdata_q;
-		if (bloodstorm_mode && bus_addr_q[1] && bus_be_q[1:0] == 2'b10) begin
+		if (profile.palette_format == PALETTE_BLOODSTORM && bus_addr_q[1] &&
+			bus_be_q[1:0] == 2'b10) begin
 			palette_write_be[1:0] = 2'b01;
 			palette_write_data[7:0] = bus_wdata_q[15:8];
 		end
@@ -639,23 +674,24 @@ module itech32_main_bus (
 		};
 	end
 
-	assign palette_video_rgb = timekill_mode ? timekill_palette_rgb_q :
-		bloodstorm_mode ? {palette_video_raw_data[23:16], palette_video_raw_data[31:24],
-			palette_video_raw_data[7:0]} : palette_video_raw_data[23:0];
+	assign palette_video_rgb =
+		(profile.palette_format == PALETTE_TIMEKILL) ? timekill_palette_rgb_q :
+		(profile.palette_format == PALETTE_BLOODSTORM) ?
+			{palette_video_raw_data[23:16], palette_video_raw_data[31:24],
+			 palette_video_raw_data[7:0]} : palette_video_raw_data[23:0];
 
 	assign nvram_write_enable = !reset && bus_pending && bus_we_q &&
 		bus_target_q == TARGET_NVRAM;
-	assign work_ram_host_write = nvram_host_write &&
-		((timekill_mode && nvram_host_addr < 17'h04000) ||
-		 (bloodstorm_mode && nvram_host_addr < 17'h10000));
-	assign sftm_nvram_host_write = nvram_host_write &&
-		!timekill_mode && !bloodstorm_mode;
+	// Battery RAM is either the dedicated 128 KiB store or the low
+	// nvram_workram_bytes of work RAM (where every work-RAM write is dirty).
+	wire workram_host_in_range = nvram_host_addr < profile.nvram_workram_bytes;
+	assign work_ram_host_write = nvram_host_write && !profile.nvram_dedicated &&
+		workram_host_in_range;
+	assign dedicated_nvram_host_write = nvram_host_write && profile.nvram_dedicated;
 	assign nvram_cpu_write = nvram_write_enable ||
-		(main_ram_write_enable && (timekill_mode || bloodstorm_mode));
-	assign nvram_host_rdata = timekill_mode ?
-		((nvram_host_addr < 17'h04000) ? work_ram_host_read_data : 16'd0) :
-		bloodstorm_mode ?
-		((nvram_host_addr < 17'h10000) ? work_ram_host_read_data : 16'd0) :
+		(main_ram_write_enable && !profile.nvram_dedicated);
+	assign nvram_host_rdata = !profile.nvram_dedicated ?
+		(workram_host_in_range ? work_ram_host_read_data : 16'd0) :
 		(!nvram_host_addr[1] ?
 			{nvram_host_read_data[23:16], nvram_host_read_data[31:24]} :
 			{nvram_host_read_data[7:0], nvram_host_read_data[15:8]});
@@ -663,8 +699,8 @@ module itech32_main_bus (
 		.clk(clk), .write_enable(nvram_write_enable && bus_be_q[0]),
 		.addr(bus_addr_q[16:2]), .write_data(bus_wdata_q[7:0]),
 		.read_data(nvram_cpu_read_data[7:0]),
-		.host_access(nvram_host_access),
-		.host_write_enable(sftm_nvram_host_write && nvram_host_addr[1]),
+		.host_owner(nvram_host_owner_q),
+		.host_write_enable(dedicated_nvram_host_write && nvram_host_addr[1]),
 		.host_addr(nvram_host_addr[16:2]),
 		.host_write_data(nvram_host_wdata[15:8]),
 		.host_read_data(nvram_host_read_data[7:0])
@@ -673,8 +709,8 @@ module itech32_main_bus (
 		.clk(clk), .write_enable(nvram_write_enable && bus_be_q[1]),
 		.addr(bus_addr_q[16:2]), .write_data(bus_wdata_q[15:8]),
 		.read_data(nvram_cpu_read_data[15:8]),
-		.host_access(nvram_host_access),
-		.host_write_enable(sftm_nvram_host_write && nvram_host_addr[1]),
+		.host_owner(nvram_host_owner_q),
+		.host_write_enable(dedicated_nvram_host_write && nvram_host_addr[1]),
 		.host_addr(nvram_host_addr[16:2]),
 		.host_write_data(nvram_host_wdata[7:0]),
 		.host_read_data(nvram_host_read_data[15:8])
@@ -683,8 +719,8 @@ module itech32_main_bus (
 		.clk(clk), .write_enable(nvram_write_enable && bus_be_q[2]),
 		.addr(bus_addr_q[16:2]), .write_data(bus_wdata_q[23:16]),
 		.read_data(nvram_cpu_read_data[23:16]),
-		.host_access(nvram_host_access),
-		.host_write_enable(sftm_nvram_host_write && !nvram_host_addr[1]),
+		.host_owner(nvram_host_owner_q),
+		.host_write_enable(dedicated_nvram_host_write && !nvram_host_addr[1]),
 		.host_addr(nvram_host_addr[16:2]),
 		.host_write_data(nvram_host_wdata[15:8]),
 		.host_read_data(nvram_host_read_data[23:16])
@@ -693,8 +729,8 @@ module itech32_main_bus (
 		.clk(clk), .write_enable(nvram_write_enable && bus_be_q[3]),
 		.addr(bus_addr_q[16:2]), .write_data(bus_wdata_q[31:24]),
 		.read_data(nvram_cpu_read_data[31:24]),
-		.host_access(nvram_host_access),
-		.host_write_enable(sftm_nvram_host_write && !nvram_host_addr[1]),
+		.host_owner(nvram_host_owner_q),
+		.host_write_enable(dedicated_nvram_host_write && !nvram_host_addr[1]),
 		.host_addr(nvram_host_addr[16:2]),
 		.host_write_data(nvram_host_wdata[7:0]),
 		.host_read_data(nvram_host_read_data[31:24])
@@ -717,15 +753,15 @@ module itech32_main_bus (
 		// Time Killers exposes the native 16-bit register spacing. SFTM's
 		// bloodstm handlers divide the 32-bit aperture offset by two, so +0/+2
 		// remain upper/lower aliases of one native register in that mode.
-		video_addr           <= timekill_mode ? cpu_addr[7:1] : cpu_addr[8:2];
+		video_addr           <= map_timekill ? cpu_addr[7:1] : cpu_addr[8:2];
 		video_wdata          <= cpu_addr[1] ? cpu_wdata[15:0] : cpu_wdata[31:16];
 		video_be             <= cpu_addr[1] ? cpu_be[1:0] : cpu_be[3:2];
-		rom_addr             <= (timekill_mode || bloodstorm_mode) ?
+		rom_addr             <= map_68000 ?
 			{3'd0, cpu_addr[18:0]} : cpu_addr[21:0];
 
 		if (reset) begin
 			cpu_rdata                  <= 32'd0;
-			plane_enable               <= timekill_mode ? 2'b11 : 2'b01;
+			plane_enable               <= profile.vram_two_planes ? 2'b11 : 2'b01;
 			grom_bank                  <= 2'b00;
 			color_data                 <= 8'd0;
 			timekill_intensity          <= 8'h60;
@@ -843,7 +879,7 @@ module itech32_main_bus (
 					end
 					TARGET_P4: begin
 						cpu_rdata <= input_p4;
-						if (bloodstorm_mode && bus_we_q)
+						if (map_bloodstorm && bus_we_q)
 							watchdog_strobe <= 1'b1;
 						cpu_ack <= 1'b1;
 						bus_pending <= 1'b0;
@@ -858,7 +894,7 @@ module itech32_main_bus (
 						// TG68K.C exposes the 32-bit 020 bus as two 16-bit cycles.
 						// The custom sound bit lives in the high half, so toggle only
 						// for addresses +0/+1; a MOVE.L must not toggle again at +2.
-						if (!bus_we_q && (timekill_mode || bloodstorm_mode || !bus_addr_q[1]))
+						if (!bus_we_q && (map_68000 || !bus_addr_q[1]))
 							special_read_strobe <= 1'b1;
 						if (bus_we_q)
 							watchdog_strobe <= 1'b1;
@@ -866,14 +902,14 @@ module itech32_main_bus (
 						bus_pending <= 1'b0;
 					end
 					TARGET_COLOR1: begin
-						if (timekill_mode && (bus_be_q[2] || bus_be_q[0])) begin
+						if (map_timekill && (bus_be_q[2] || bus_be_q[0])) begin
 							color1_strobe <= 1'b1;
 							color_data <= bus_addr_q[1] ? bus_wdata_q[7:0] :
 								bus_wdata_q[23:16];
-						end else if (bloodstorm_mode && bus_be_q[2]) begin
+						end else if (map_bloodstorm && bus_be_q[2]) begin
 							color1_strobe <= 1'b1;
 							color_data <= bus_wdata_q[23:16];
-						end else if (!timekill_mode && !bloodstorm_mode && bus_be_q[0]) begin
+						end else if (!map_68000 && bus_be_q[0]) begin
 							// SFTM's 0x000000ff handler mask selects only byte +3.
 							color1_strobe <= 1'b1;
 							color_data <= bus_wdata_q[7:0];
@@ -882,7 +918,7 @@ module itech32_main_bus (
 						bus_pending <= 1'b0;
 					end
 					TARGET_COLOR0: begin
-						if (timekill_mode && (bus_be_q[2] || bus_be_q[0])) begin
+						if (map_timekill && (bus_be_q[2] || bus_be_q[0])) begin
 							color0_strobe <= 1'b1;
 							color_data <= bus_addr_q[1] ? bus_wdata_q[7:0] :
 								bus_wdata_q[23:16];
@@ -890,10 +926,10 @@ module itech32_main_bus (
 								bus_wdata_q[5] : bus_wdata_q[21]);
 							plane_enable[1] <= ~(bus_addr_q[1] ?
 								bus_wdata_q[7] : bus_wdata_q[23]);
-						end else if (bloodstorm_mode && bus_be_q[2]) begin
+						end else if (map_bloodstorm && bus_be_q[2]) begin
 							color0_strobe <= 1'b1;
 							color_data <= bus_wdata_q[23:16];
-						end else if (!timekill_mode && !bloodstorm_mode && bus_be_q[0]) begin
+						end else if (!map_68000 && bus_be_q[0]) begin
 							color0_strobe <= 1'b1;
 							color_data <= bus_wdata_q[7:0];
 						end
@@ -906,7 +942,7 @@ module itech32_main_bus (
 						bus_pending <= 1'b0;
 					end
 					TARGET_SOUND_COMMAND: begin
-						sound_command_valid <= !bloodstorm_mode || bus_be_q[2];
+						sound_command_valid <= !map_bloodstorm || bus_be_q[2];
 						sound_command <= bus_addr_q[1] ?
 							bus_wdata_q[7:0] : bus_wdata_q[23:16];
 						cpu_ack <= 1'b1;
@@ -948,7 +984,7 @@ module itech32_main_bus (
 						bus_pending <= 1'b0;
 						main_ram_read_pending <= 1'b1;
 						main_ram_read_is_protection <= 1'b1;
-						main_ram_protection_lane <= protection_address[1:0];
+						main_ram_protection_lane <= profile.protection_address[1:0];
 					end
 					TARGET_PROTECTION_RANGE: begin
 						cpu_rdata <= 32'hffff_ffff;
@@ -956,7 +992,7 @@ module itech32_main_bus (
 						bus_pending <= 1'b0;
 					end
 					TARGET_PLANE: begin
-						if (bloodstorm_mode) begin
+						if (map_bloodstorm) begin
 							if (bus_be_q[2]) begin
 								plane_enable[0] <= ~bus_wdata_q[17];
 								plane_enable[1] <= ~bus_wdata_q[18];
@@ -997,4 +1033,17 @@ module itech32_main_bus (
 			end
 		end
 	end
+
+`ifndef SYNTHESIS
+	// While the transfer owns the RAM read ports, no CPU access may be in
+	// flight: its address would be replaced by the host's.
+	always_ff @(posedge clk) begin
+		if (nvram_host_owner_q) begin
+			assert (bus_idle && !bus_accept)
+				else $fatal(1, "CPU access in flight while NVRAM host owns RAM");
+			assert (!main_ram_write_enable && !nvram_write_enable)
+				else $fatal(1, "CPU RAM write while NVRAM host owns RAM");
+		end
+	end
+`endif
 endmodule

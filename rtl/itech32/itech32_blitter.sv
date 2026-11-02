@@ -7,13 +7,15 @@
 
 `timescale 1ns/1ps
 
-module itech32_blitter #(
+module itech32_blitter
+	import itech32_profile_pkg::*;
+#(
 	parameter integer GROM_ADDR_WIDTH = 26,
 	parameter integer VRAM_ADDR_WIDTH = 19
 ) (
 	input  logic                         clk,
 	input  logic                         reset,
-	input  logic                         timekill_mode,
+	input  board_profile_t               profile,
 
 	input  logic                         reg_req,
 	input  logic                         reg_we,
@@ -321,7 +323,7 @@ module itech32_blitter #(
 		input logic [11:0] x_value,
 		input logic [11:0] y_value
 	);
-		if (timekill_mode)
+		if (profile.vram_two_planes)
 			integer_vram_address = {1'b0, y_value[8:0], x_value[8:0]};
 		else
 			integer_vram_address = {y_value[9:0], x_value[8:0]};
@@ -331,7 +333,7 @@ module itech32_blitter #(
 		input logic signed [31:0] x_value,
 		input logic signed [31:0] y_value
 	);
-		if (timekill_mode)
+		if (profile.vram_two_planes)
 			fixed_vram_address = {1'b0, y_value[16:8], x_value[16:8]};
 		else
 			fixed_vram_address = {y_value[17:8], x_value[16:8]};
@@ -780,14 +782,16 @@ module itech32_blitter #(
 				end
 			end
 
+			// Colour-latch formats follow the map's latch handlers (MAME:
+			// timekill_color*_w versus the bloodstm/itech020 handlers).
 			if (color0_we) begin
-				if (timekill_mode)
+				if (profile.memory_map == MAP_TIMEKILL)
 					color_latch[0] <= {4'd0, color_data[3:0], 8'h00};
 				else
 					color_latch[0] <= {color_data, 8'h00} & 16'h7f00;
 			end
 			if (color1_we) begin
-				if (timekill_mode)
+				if (profile.memory_map == MAP_TIMEKILL)
 					color_latch[1] <= {3'd0, 1'b1, color_data[7:4], 8'h00};
 				else
 					color_latch[1] <= {color_data, 8'h00} & 16'h7f00;

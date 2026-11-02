@@ -133,8 +133,12 @@ module itech32_video_path (
 			!(hscale_hblank || hscale_vblank) : mixer_de;
 		// Values 1..4 map to the framework's 0..3 scanline strengths. Use
 		// the explicit low-width subtraction so synthesis does not create a
-		// needless 3-bit result followed by an implicit truncation.
-		vga_sl = scandoubler_fx == 3'd0 ? 2'd0 :
+		// needless 3-bit result followed by an implicit truncation. The
+		// framework's scanline module darkens every other output line; with
+		// the H-scaler active there is no scandoubled copy, so it would dim
+		// alternate real 15 kHz picture lines. Use the same frame-latched
+		// select that bypasses the scandoubler above.
+		vga_sl = (hscale_selected || scandoubler_fx == 3'd0) ? 2'd0 :
 			(scandoubler_fx[1:0] - 2'd1);
 	end
 endmodule

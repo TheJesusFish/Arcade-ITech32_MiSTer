@@ -21,8 +21,8 @@ module itech32_sound_cache_phase_tb;
     wire [21:0] sample_addr;
     wire [15:0] sample_data;
     itech32_sound_board sound(
-        .clk(clk), .reset(board_reset), .rev1_mode(1'b0),
-        .ce_8m(ce8), .ce_16m(ce16), .ce_2m(ce2),
+        .clk(clk), .reset(board_reset), .profile(itech32_profile_tb_pkg::mode_profile(1'b0, 1'b0)),
+        .ce_8m(ce8), .ce_16m(ce16), .ce_2m(ce2), .audio_gain(2'd0),
         .main_command_valid(1'b0), .main_command(8'd0), .main_command_ready(),
         .main_special_read(1'b0), .sound_special(), .command_pending(),
         .sound_req(sound_req), .sound_addr(sound_addr), .sound_ack(sound_ack), .sound_rdata(sound_data),
@@ -37,7 +37,7 @@ module itech32_sound_cache_phase_tb;
     wire [28:0] caddr;
     wire [63:0] crdata, cwdata;
     itech32_ddr_memory #(.VRAM_CLEAR_LINES(8)) memory(
-        .clk(clk), .reset(reset), .timekill_mode(1'b0), .bloodstorm_mode(1'b0), .quiesce(1'b0),
+        .clk(clk), .reset(reset), .profile(itech32_profile_tb_pkg::mode_profile(1'b0, 1'b0)), .quiesce(1'b0),
         .ioctl_download(download), .ioctl_wr(1'b0), .ioctl_index(16'd0), .ioctl_addr(27'd0),
         .ioctl_data(16'd0), .ioctl_wait(), .rom_loaded(loaded), .vector_load_we(),
         .vector_load_addr(), .vector_load_wdata(), .vector_load_be(),
@@ -182,10 +182,10 @@ module itech32_sound_cache_phase_tb;
                     $finish;
                 end
             end else if (writes>=64 && reads>=64) begin
-				assert ((memory.sound_cache_valid_way0[0] ||
-					memory.sound_cache_valid_way1[0]) &&
-					(memory.sound_cache_valid_way0[1] ||
-					 memory.sound_cache_valid_way1[1]))
+				assert ((memory.sound_cache.valid_way0[0] ||
+					memory.sound_cache.valid_way1[0]) &&
+					(memory.sound_cache.valid_way0[1] ||
+					 memory.sound_cache.valid_way1[1]))
                     else $fatal(1,"both code qwords are not resident");
                 assert (physical_sound_reads>=3) else $fatal(1,"cold fill not exercised");
                 warm_ddr_reads=physical_sound_reads;

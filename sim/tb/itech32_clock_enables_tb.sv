@@ -31,7 +31,6 @@ module itech32_clock_enables_tb;
 
 	itech32_clock_enables #(.CLK_HZ(FABRIC_HZ), .PIXEL_DIV(PIXEL_DIV)) dut (
 		.clk(clk), .reset(reset),
-		.alternate_clock(1'b0),
 		.ce_cpu_25m(ce25), .ce_ensoniq_16m(ce16),
 		.ce_cpu_12m(ce12),
 		.ce_pixel(ce_pixel), .ce_sound_8m(ce_sound8), .ce_sound_2m(ce2)

@@ -4,12 +4,12 @@
 // https://github.com/MiSTer-devel/Arcade-IGSPGM_MiSTer/blob/main/rtl/video_hscale.sv
 // Modified for ITech32; see CREDITS.md and LICENSE for attribution and terms.
 //
-// The PGM implementation assumes a fixed integer number of fabric clocks per
-// source pixel. ITech32 uses a fractional fabric-clock CE to reproduce the
-// measured 54.75-Hz refresh, so this version measures the active interval in
-// fabric clocks and maps that interval to the source pixels with a registered
-// DDA. Geometry arithmetic runs serially between line boundaries: there is no
-// combinational divider, wide RGB mux, or variable shift on the 100-MHz path.
+// The PGM implementation assumes a fixed number of fabric clocks per source
+// pixel. This version instead measures the active interval in fabric clocks
+// and maps that interval to the source pixels with a registered DDA, so it
+// does not depend on the pixel divider. Geometry arithmetic runs serially
+// between line boundaries: there is no combinational divider, wide RGB mux,
+// or variable shift on the fabric-clock path.
 `timescale 1ns/1ps
 
 module itech32_video_hscale (
