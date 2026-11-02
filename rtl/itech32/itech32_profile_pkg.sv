@@ -16,6 +16,8 @@ package itech32_profile_pkg;
 	localparam logic [7:0] SELECT_SFTM       = 8'h00;
 	localparam logic [7:0] SELECT_TIMEKILL   = 8'h01;
 	localparam logic [7:0] SELECT_BLOODSTORM = 8'h02;
+	localparam logic [7:0] SELECT_HARDYARD   = 8'h03;
+	localparam logic [7:0] SELECT_PAIRS      = 8'h04; // also Hot Memory, Pairs Redemption
 
 	// Main-CPU address map (MAME: itech020_map, timekill_map, bloodstm_map).
 	localparam logic [1:0] MAP_ITECH020   = 2'd0;
@@ -23,9 +25,11 @@ package itech32_profile_pkg;
 	localparam logic [1:0] MAP_BLOODSTORM = 2'd2;
 
 	// Controller wiring onto the board's input ports.
-	localparam logic [1:0] INPUTS_SFTM       = 2'd0;
-	localparam logic [1:0] INPUTS_TIMEKILL   = 2'd1;
-	localparam logic [1:0] INPUTS_BLOODSTORM = 2'd2;
+	localparam logic [2:0] INPUTS_SFTM       = 3'd0;
+	localparam logic [2:0] INPUTS_TIMEKILL   = 3'd1;
+	localparam logic [2:0] INPUTS_BLOODSTORM = 3'd2;
+	localparam logic [2:0] INPUTS_HARDYARD   = 3'd3; // four players on P1..P4
+	localparam logic [2:0] INPUTS_PAIRS      = 3'd4; // one button per player
 
 	// Palette RAM layout presented to the video output.
 	localparam logic [1:0] PALETTE_DIRECT     = 2'd0; // itech020 xRGB
@@ -41,7 +45,7 @@ package itech32_profile_pkg;
 		// 68000 at 12 MHz; otherwise 68EC020 at 25 MHz.
 		logic        cpu_68000;
 		logic [1:0]  memory_map;
-		logic [1:0]  input_layout;
+		logic [2:0]  input_layout;
 		logic [1:0]  palette_format;
 		// Time Killers: two 512-row framebuffer planes composited at scanout.
 		logic        vram_two_planes;
@@ -97,10 +101,16 @@ package itech32_profile_pkg;
 					profile.sample_slots        = {SAMPLE_EMPTY, SAMPLE_SLOT_A,
 						SAMPLE_EMPTY, SAMPLE_EMPTY};
 				end
-				SELECT_BLOODSTORM: begin
+				// MAME's bloodstm machine: BloodStorm, Hard Yardage and the
+				// Pairs family share the board and differ only in controls.
+				SELECT_BLOODSTORM, SELECT_HARDYARD, SELECT_PAIRS: begin
 					profile.cpu_68000           = 1'b1;
 					profile.memory_map          = MAP_BLOODSTORM;
-					profile.input_layout        = INPUTS_BLOODSTORM;
+					case (selector)
+						SELECT_HARDYARD: profile.input_layout = INPUTS_HARDYARD;
+						SELECT_PAIRS:    profile.input_layout = INPUTS_PAIRS;
+						default:         profile.input_layout = INPUTS_BLOODSTORM;
+					endcase
 					profile.palette_format      = PALETTE_BLOODSTORM;
 					profile.vram_two_planes     = 1'b0;
 					profile.sound_rev1          = 1'b1;

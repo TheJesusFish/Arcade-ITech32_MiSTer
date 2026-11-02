@@ -78,8 +78,12 @@ wire         nvram_dirty;
 wire         ioctl_upload_req;
 wire  [31:0] joystick_0;
 wire  [31:0] joystick_1;
+wire  [31:0] joystick_2;
+wire  [31:0] joystick_3;
 wire  [11:0] game_joystick_0;
 wire  [11:0] game_joystick_1;
+wire  [11:0] game_joystick_2;
+wire  [11:0] game_joystick_3;
 
 // One free-running core PLL, named and instantiated as the framework expects
 // so sys_top.sdc constrains it. Never reset it: warm resets must not stop
@@ -115,6 +119,8 @@ hps_io #(.CONF_STR(CONF_STR), .WIDE(1)) hps_io
 	.ioctl_wait        (ioctl_wait),
 	.joystick_0        (joystick_0),
 	.joystick_1        (joystick_1),
+	.joystick_2        (joystick_2),
+	.joystick_3        (joystick_3),
 	.ps2_key           ()
 );
 
@@ -174,6 +180,8 @@ wire core_audio_strobe;
 // that interval, but otherwise pass the mapped controller payload unchanged.
 assign game_joystick_0 = OSD_STATUS ? 12'd0 : joystick_0[11:0];
 assign game_joystick_1 = OSD_STATUS ? 12'd0 : joystick_1[11:0];
+assign game_joystick_2 = OSD_STATUS ? 12'd0 : joystick_2[11:0];
+assign game_joystick_3 = OSD_STATUS ? 12'd0 : joystick_3[11:0];
 
 itech32_core core
 (
@@ -194,6 +202,8 @@ itech32_core core
 	.nvram_dirty    (nvram_dirty),
 	.joystick_0     (game_joystick_0),
 	.joystick_1     (game_joystick_1),
+	.joystick_2     (game_joystick_2),
+	.joystick_3     (game_joystick_3),
 	.DDRAM_CLK      (DDRAM_CLK),
 	.DDRAM_BUSY     (DDRAM_BUSY),
 	.DDRAM_BURSTCNT (DDRAM_BURSTCNT),

@@ -33,6 +33,8 @@ module itech32_core
 
 	input  logic [11:0] joystick_0,
 	input  logic [11:0] joystick_1,
+	input  logic [11:0] joystick_2,
+	input  logic [11:0] joystick_3,
 
 	output logic        DDRAM_CLK,
 	input  logic        DDRAM_BUSY,
@@ -182,7 +184,7 @@ module itech32_core
 		(ioctl_download && ioctl_index == 16'h0000) ||
 		(ioctl_wr && ioctl_index == 16'h0001 && ioctl_addr == 27'd0);
 
-	// 00=SFTM, 01=Time Killers, and 02=BloodStorm. Unsupported selectors retain
+	// Selector values are listed in itech32_profile_pkg. Unsupported selectors retain
 	// the SFTM fallback, so an incomplete/older MRA cannot select another board.
 	itech32_game_selector game_selector (
 		.clk(clk), .write(game_selector_write), .data(ioctl_data[7:0]),
@@ -238,6 +240,7 @@ module itech32_core
 	itech32_inputs inputs (
 		.clk(clk), .reset(platform_reset), .profile(profile),
 		.joystick_0(joystick_0), .joystick_1(joystick_1),
+		.joystick_2(joystick_2), .joystick_3(joystick_3),
 		.service_button(1'b0), .vblank(vblank),
 		// MAME toggles the phase before returning the side-effecting special
 		// read. Predict that value combinationally; the registered read strobe

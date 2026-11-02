@@ -63,6 +63,7 @@ TESTS = {
     "video-timing": test("itech32_video_timing_tb", [CORE + "itech32_video_timing.sv"]),
     "inputs": test("itech32_inputs_tb", [CORE + "itech32_inputs.sv"]),
     "blood-inputs": test("itech32_bloodstorm_inputs_tb", [CORE + "itech32_inputs.sv"]),
+    "family-inputs": test("itech32_bloodstm_family_inputs_tb", [CORE + "itech32_inputs.sv"]),
     "cpu-adapter": test("itech32_tg68_bus_adapter_tb", [CORE + "itech32_tg68_bus_adapter.sv"]),
     "blitter": test("itech32_blitter_tb", [CORE + "itech32_blitter.sv"]),
     "graphics-queue": test("itech32_graphics_queue_tb",

@@ -2,7 +2,8 @@
 
 This is a vibe coded, MAME-based Incredible Technologies ITech32 arcade core
 for the MiSTer FPGA. It currently supports the 68000-based Time Killers and
-BloodStorm boards and the 68EC020-based Street Fighter: The Movie board.
+BloodStorm boards (BloodStorm's board also runs Hard Yardage, Pairs, Hot Memory,
+and Pairs Redemption) and the 68EC020-based Street Fighter: The Movie board.
 
 **This core is vibe coded based on MAME. Its built binaries and MRAs live in
 the [Slop Core Repo](https://github.com/TheJesusFish/Slop-Core).**
@@ -11,7 +12,7 @@ the [Slop Core Repo](https://github.com/TheJesusFish/Slop-Core).**
 
 MAME 0.288 models the supported ITech32 boards as:
 
-- Motorola 68000 main CPU at 12 MHz for Time Killers and BloodStorm.
+- Motorola 68000 main CPU at 12 MHz for Time Killers and the BloodStorm board.
 - Motorola 68EC020 main CPU at 25 MHz for Street Fighter: The Movie.
 - Motorola 6809 sound CPU at 16 MHz / 8, or 2 MHz.
 - Ensoniq ES5506 sound device at 16 MHz.
@@ -32,14 +33,21 @@ analog characteristics.
 | Street Fighter: The Movie | 1.12 | `sftm` |
 | Time Killers | 1.32 | `timekill` |
 | BloodStorm | 2.22 | `bloodstm` |
+| Hard Yardage | 1.20 | `hardyard` |
+| Pairs | 1.2 | `pairs` |
+| Hot Memory | 1.2 (Germany) | `hotmemry` |
+| Pairs Redemption | 1.0 | `pairsred` |
 
-The three games share one `Arcade-ITech32.rbf`. Their MRA descriptors are in
-[`releases/`](releases/). Seventeen supported earlier and regional revisions are
+Hard Yardage and the Pairs family are new and not yet hardware-tested; see
+[`docs/STATUS.md`](docs/STATUS.md). Hard Yardage supports four players.
+
+The games share one `Arcade-ITech32.rbf`. Their MRA descriptors are in
+[`releases/`](releases/). Twenty-one supported earlier and regional revisions are
 provided in [`releases/alternatives/`](releases/alternatives/); the exact support
 boundary and validation status are recorded in
 [`docs/CLONE_SUPPORT.md`](docs/CLONE_SUPPORT.md). Game ROMs are not included.
 
-Board NVRAM is persistent for all three families. On a first run with no saved
+Board NVRAM is persistent for every supported board. On a first run with no saved
 NVRAM, SFTM and BloodStorm can still show the authentic battery-backup warning;
 acknowledge it once and open the MiSTer OSD to save the initialized contents.
 The next launch restores that data. See [`docs/NVRAM.md`](docs/NVRAM.md).

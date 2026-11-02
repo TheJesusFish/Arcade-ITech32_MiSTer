@@ -50,15 +50,32 @@ module itech32_game_selector_tb;
 		assert (!profile.vram_two_planes && profile.nvram_workram_bytes == 17'h10000 &&
 			profile.palette_format == PALETTE_BLOODSTORM)
 			else $fatal(1, "SELECTOR_BLOODSTORM_FEATURES");
-		select(8'h03);
-		expect_board("SFTM_FALLBACK_03", MAP_ITECH020, 1'b0, 1'b0, 1'b1, 7'd65);
+		select(SELECT_HARDYARD);
+		expect_board("HARDYARD", MAP_BLOODSTORM, 1'b1, 1'b1, 1'b0, 7'd17);
+		assert (profile.input_layout == INPUTS_HARDYARD &&
+			profile.palette_format == PALETTE_BLOODSTORM &&
+			profile.nvram_workram_bytes == 17'h10000 && profile.sound_last_bank == 8'd5 &&
+			profile.sample_slots == {SAMPLE_EMPTY, SAMPLE_SLOT_B, SAMPLE_EMPTY, SAMPLE_SLOT_A})
+			else $fatal(1, "SELECTOR_HARDYARD_FEATURES");
+		select(SELECT_PAIRS);
+		expect_board("PAIRS", MAP_BLOODSTORM, 1'b1, 1'b1, 1'b0, 7'd17);
+		assert (profile.input_layout == INPUTS_PAIRS &&
+			profile.palette_format == PALETTE_BLOODSTORM &&
+			profile.nvram_workram_bytes == 17'h10000 && profile.sound_last_bank == 8'd5 &&
+			profile.sample_slots == {SAMPLE_EMPTY, SAMPLE_SLOT_B, SAMPLE_EMPTY, SAMPLE_SLOT_A})
+			else $fatal(1, "SELECTOR_PAIRS_FEATURES");
+		select(SELECT_BLOODSTORM);
+		assert (profile.input_layout == INPUTS_BLOODSTORM)
+			else $fatal(1, "SELECTOR_BLOODSTORM_INPUTS");
+		select(8'h05);
+		expect_board("SFTM_FALLBACK_05", MAP_ITECH020, 1'b0, 1'b0, 1'b1, 7'd65);
 		select(8'hff);
 		expect_board("FALLBACK", MAP_ITECH020, 1'b0, 1'b0, 1'b1, 7'd65);
 		select(SELECT_SFTM);
 		assert (profile.protection_address == 15'h7a6a &&
 			profile.palette_format == PALETTE_DIRECT && profile.sound_last_bank == 8'd13)
 			else $fatal(1, "SELECTOR_SFTM_FEATURES");
-		$display("GAME_SELECTOR_PASS profiles=3 sftm_fallbacks=2");
+		$display("GAME_SELECTOR_PASS profiles=5 sftm_fallbacks=2");
 		$finish;
 	end
 endmodule

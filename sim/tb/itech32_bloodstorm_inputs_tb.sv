@@ -5,7 +5,7 @@
 // immediate DIP/service/vblank/custom inputs. No HPS/MRA/device is simulated.
 module itech32_bloodstorm_inputs_tb;
     logic clk = 0, reset = 1, timekill_mode = 0, bloodstorm_mode = 1;
-    logic [11:0] joystick_0 = 0, joystick_1 = 0;
+    logic [11:0] joystick_0 = 0, joystick_1 = 0, joystick_2 = 0, joystick_3 = 0;
     logic service_button = 0, vblank = 0, sound_special = 0;
     logic [7:0] dip_switches = 0;
     logic [31:0] input_p1, input_p2, input_p3, input_p4, input_dips, input_extra;

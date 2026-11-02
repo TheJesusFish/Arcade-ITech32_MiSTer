@@ -6,7 +6,7 @@ detached settings copy:
 | Board profile | CPU aperture | Saved bytes | Backing store |
 | --- | --- | ---: | --- |
 | Street Fighter: The Movie | `0x600000-0x61ffff` | 131072 | dedicated 128 KiB NVRAM |
-| BloodStorm | `0x000000-0x00ffff` | 65536 | complete work RAM |
+| BloodStorm, Hard Yardage, Pairs family | `0x000000-0x00ffff` | 65536 | complete work RAM |
 | Time Killers | `0x000000-0x003fff` | 16384 | low 16 KiB of work RAM |
 
 Each MRA declares `<nvram index="2" size="..."/>`. Main_MiSTer restores index 2
@@ -56,7 +56,7 @@ two-byte validity field changes, and the following reload is clean.
 
 ## Verification and follow-up
 
-- `game-selector` checks all three board profiles and unsupported-selector SFTM
+- `game-selector` checks every board profile and unsupported-selector SFTM
   fallback behavior.
 - `nvram-save-request` checks one-shot OSD-edge saves and specifically rejects
   retriggering when active work RAM becomes dirty again while the OSD is open.

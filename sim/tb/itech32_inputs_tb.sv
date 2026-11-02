@@ -7,6 +7,8 @@ module itech32_inputs_tb;
 	logic bloodstorm_mode = 1'b0;
 	logic [11:0] joystick_0 = 12'd0;
 	logic [11:0] joystick_1 = 12'd0;
+	logic [11:0] joystick_2 = 12'd0;
+	logic [11:0] joystick_3 = 12'd0;
 	logic service_button = 1'b0;
 	logic vblank = 1'b0;
 	logic sound_special = 1'b0;

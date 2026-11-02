@@ -50,6 +50,15 @@ To add a game:
 3. Generate MRAs that write the new selector before the ROM stream, then extend
    the ROM-free tests and the game-selector bench.
 
+Selectors in use: `00` SFTM, `01` Time Killers, `02` BloodStorm, `03` Hard
+Yardage, `04` Pairs, Hot Memory, and Pairs Redemption. `03` and `04` share
+BloodStorm's row (MAME's `bloodstm` machine) and change only the input layout.
+
+The graphics-ROM page count is MAME's `grom` region size, not the amount of
+ROM loaded: MAME wraps blitter reads at `m_grom.length()`. Every
+`bloodstm`-machine set declares a `0x880000` region (17 pages) even when its
+GROMs fill only part of it; the MRA zero-fills the rest as MAME does.
+
 Current implementation limits: the graphics-ROM wrap supports 16-127 pages of
 512 KiB, and sample banks map to two physical DDR slots (A and B) or to empty.
 

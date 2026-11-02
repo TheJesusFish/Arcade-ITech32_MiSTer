@@ -23,6 +23,14 @@ def replace_once(text: str, old: str, new: str, label: str) -> str:
     return text.replace(old, new, 1)
 
 
+def write_alternative(group: str, filename: str, text: str) -> Path:
+    # Main_MiSTer lists each game's alternatives from an _<Game> folder.
+    path = OUTPUT / f"_{group}" / filename
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8", newline="\n")
+    return path
+
+
 def replace_regex_once(text: str, pattern: str, replacement: str, label: str) -> str:
     result, count = re.subn(pattern, replacement, text, count=1, flags=re.DOTALL)
     if count != 1:
@@ -137,9 +145,7 @@ def generate_timekill() -> list[Path]:
                 TIMEKILL_DISCRETE_GROM,
                 setname,
             )
-        path = OUTPUT / f"{title}.mra"
-        path.write_text(text, encoding="utf-8", newline="\n")
-        written.append(path)
+        written.append(write_alternative("Time Killers", f"{title}.mra", text))
     return written
 
 
@@ -203,9 +209,7 @@ def generate_bloodstorm() -> list[Path]:
                 '        <part name="bldsnd_v1.0_u17.u17" crc="dddeedbb" offset="0x0" length="0x18000" />'
             )
             text = replace_once(text, BLOOD_SOUND, sound_text, setname)
-        path = OUTPUT / f"{title}.mra"
-        path.write_text(text, encoding="utf-8", newline="\n")
-        written.append(path)
+        written.append(write_alternative("BloodStorm", f"{title}.mra", text))
     return written
 
 
@@ -283,17 +287,118 @@ def generate_sftm() -> list[Path]:
             )
             text = replace_once(text, SFTM_SOUND, sound_text, setname)
         # Keep the XML title verbatim; Windows filenames cannot contain ':'.
-        path = OUTPUT / f"{title.replace(':', ' -')}.mra"
-        path.write_text(text, encoding="utf-8", newline="\n")
-        written.append(path)
+        written.append(write_alternative("Street Fighter - The Movie",
+                                         f"{title.replace(':', ' -')}.mra", text))
     return written
+
+
+# The bloodstm-board parents below share one descriptor layout, written by hand
+# from MAME's ROM_START blocks.
+def bloodstm_program(program: tuple[str, str, str, str]) -> str:
+    p0, c0, p1, c1 = program
+    return (
+        f'            <part name="{p0}" crc="{c0}" map="01" />\n'
+        f'            <part name="{p1}" crc="{c1}" map="10" />'
+    )
+
+
+def bloodstm_sound(name: str, crc: str) -> str:
+    return (
+        f'        <part name="{name}" crc="{crc}" offset="0x18000" length="0x8000" />\n'
+        f'        <part name="{name}" crc="{crc}" offset="0x0" length="0x18000" />'
+    )
+
+
+def retitle(template: str, parent: tuple[str, str, str, str], setname: str, title: str,
+            mame_parent: str, md5: str) -> str:
+    parent_title, parent_set, parent_zip, parent_md5 = parent
+    text = replace_once(template, f"<name>{parent_title}</name>", f"<name>{title}</name>", setname)
+    text = replace_once(text, f"<setname>{parent_set}</setname>",
+                        f"<setname>{setname}</setname>", setname)
+    return replace_once(
+        text,
+        f'zip="{parent_zip}" address="0x30000000" md5="{parent_md5}"',
+        f'zip="{setname}.zip|{mame_parent}.zip" address="0x30000000" md5="{md5}"',
+        setname,
+    )
+
+
+HARDYARD_PARENT = ("Hard Yardage (v1.20)", "hardyard", "hardyard.zip",
+                   "c248f9036f672fa6ee9426c2e0994cbe")
+HARDYARD_PROGRAM = ("fb00_v1.20_u83.u83", "c7497692", "fb01_v1.20_u88.u88", "3320c79a")
+HARDYARD_SPECS = (
+    ("hardyard11", "Hard Yardage (v1.10)",
+     ("fb00_v1.10_u83.u83", "603f8a03", "fb01_v1.10_u88.u88", "7b11db88"), None,
+     "f035c59257e8eee290cdb0f898d25c7c"),
+    ("hardyard10", "Hard Yardage (v1.00)",
+     ("fb00_v1.0_u83.u83", "f839393c", "fb01_v1.0_u88.u88", "ca444702"),
+     ("fb_snd_v1.0_u17.u17", "6c6db5b8"), "f3a1140586e82bff53ae700322bf32b3"),
+)
+
+
+def generate_hardyard() -> list[Path]:
+    template = (RELEASES / f"{HARDYARD_PARENT[0]}.mra").read_text(encoding="utf-8")
+    written = []
+    for setname, title, program, sound, md5 in HARDYARD_SPECS:
+        text = retitle(template, HARDYARD_PARENT, setname, title, "hardyard", md5)
+        text = replace_once(text, bloodstm_program(HARDYARD_PROGRAM), bloodstm_program(program),
+                            setname)
+        if sound:
+            text = replace_once(text, bloodstm_sound("fb_snd_v1.1_u17.u17", "d221b121"),
+                                bloodstm_sound(*sound), setname)
+        written.append(write_alternative("Hard Yardage", f"{title}.mra", text))
+    return written
+
+
+PAIRS_PARENT = ("Pairs (V1.2)", "pairs", "pairs.zip", "59fb3161b0528949f173b9d2df34dd67")
+
+
+def generate_pairs() -> list[Path]:
+    template = (RELEASES / f"{PAIRS_PARENT[0]}.mra").read_text(encoding="utf-8")
+    setname, title = "pairsa", "Pairs (V1)"
+    text = retitle(template, PAIRS_PARENT, setname, title, "pairs", "eac2068665983e8e3aad9463fa5a6e7f")
+    text = replace_once(
+        text,
+        bloodstm_program(("pair0_u83_x_v1.2.u83", "a9c761d8", "pair1_u88_x_v1.2.u88", "5141eb86")),
+        bloodstm_program(("pair0_u83_x_v1.u83", "774995a3", "pair1_u83_x_v1.u88", "85d0b73a")),
+        setname,
+    )
+    text = replace_once(text, '<part name="srom0.bin" crc="19a857f9" map="01" />',
+                        '<part name="srom0_pairs_v1.srom0" crc="1d96c581" map="01" />', setname)
+    return [write_alternative("Pairs", f"{title}.mra", text)]
+
+
+HOTMEMRY_PARENT = ("Hot Memory (V1.2, Germany)", "hotmemry", "hotmemry.zip|pairs.zip",
+                   "81d9cadb739215b759976b25c4d496ad")
+
+
+def generate_hotmemry() -> list[Path]:
+    template = (RELEASES / f"{HOTMEMRY_PARENT[0]}.mra").read_text(encoding="utf-8")
+    setname, title = "hotmemry11", "Hot Memory (V1.1, Germany)"
+    text = retitle(template, HOTMEMRY_PARENT, setname, title, "pairs", "6629b7da49ad8caf60cd6b7aa49c76ba")
+    # v1.1 has half-size program EPROMs; MAME erases the region to 0xff.
+    text = replace_once(
+        text,
+        "        <!-- 0x0000000: 68000 program, 512 KiB of the 512 KiB region. -->\n"
+        + "        <interleave output=\"16\">\n"
+        + bloodstm_program(("hotmem0_u83_v1.2.u83", "5b9d87a2", "hotmem1_u88_v1.2.u88", "aeea087c"))
+        + "\n        </interleave>\n",
+        "        <!-- 0x0000000: 68000 program, 256 KiB; MAME erases the rest to 0xff. -->\n"
+        + "        <interleave output=\"16\">\n"
+        + bloodstm_program(("hotmem0_u83_v1.1.u83", "8d614b1b", "hotmem1_u88_v1.1.u88", "009639fb"))
+        + "\n        </interleave>\n"
+        + '        <part repeat="0x40000">FF</part>\n',
+        setname,
+    )
+    return [write_alternative("Hot Memory", f"{title}.mra", text)]
 
 
 def main() -> int:
     OUTPUT.mkdir(parents=True, exist_ok=True)
-    written = generate_timekill() + generate_bloodstorm() + generate_sftm()
+    written = (generate_timekill() + generate_bloodstorm() + generate_sftm() +
+               generate_hardyard() + generate_pairs() + generate_hotmemry())
     expected = {path.resolve() for path in written}
-    actual = {path.resolve() for path in OUTPUT.glob("*.mra")}
+    actual = {path.resolve() for path in OUTPUT.rglob("*.mra")}
     if actual != expected:
         unexpected = sorted(str(path.relative_to(ROOT)) for path in actual - expected)
         missing = sorted(str(path.relative_to(ROOT)) for path in expected - actual)

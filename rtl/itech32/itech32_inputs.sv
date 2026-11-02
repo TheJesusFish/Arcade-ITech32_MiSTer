@@ -11,6 +11,8 @@ module itech32_inputs
 	input  board_profile_t profile,
 	input  logic [11:0] joystick_0,
 	input  logic [11:0] joystick_1,
+	input  logic [11:0] joystick_2,
+	input  logic [11:0] joystick_3,
 	input  logic        service_button,
 	input  logic        vblank,
 	input  logic        sound_special,
@@ -26,6 +28,8 @@ module itech32_inputs
 );
 	logic [11:0] joystick_0_q;
 	logic [11:0] joystick_1_q;
+	logic [11:0] joystick_2_q;
+	logic [11:0] joystick_3_q;
 
 	// hps_io and OSD ownership are clk-domain signals, but their live decode
 	// previously reached the main CPU read path in one combinational cone.
@@ -36,14 +40,26 @@ module itech32_inputs
 		if (reset) begin
 			joystick_0_q <= 12'd0;
 			joystick_1_q <= 12'd0;
+			joystick_2_q <= 12'd0;
+			joystick_3_q <= 12'd0;
 		end else begin
 			joystick_0_q <= joystick_0[11:0];
 			joystick_1_q <= joystick_1[11:0];
+			joystick_2_q <= joystick_2[11:0];
+			joystick_3_q <= joystick_3[11:0];
 		end
 	end
 
 	// MiSTer joystick ordering follows the CONF_STR J field: directions in
 	// bits 0..3, then B1..B6 in 4..9, Start 10 and Coin 11.
+
+	// MAME itech32_base_16bit player byte, active low: Coin, Start, B1, then
+	// the game's bit-3 control, Right, Left, Down, Up.
+	function automatic logic [7:0] player_16bit(input logic [11:0] joystick,
+		input logic bit3, input logic coin);
+		player_16bit = ~{joystick[3:0], bit3, joystick[4], joystick[10], coin};
+	endfunction
+
 	always_comb begin
 		input_p1 = 32'd0;
 		input_p2 = 32'd0;
@@ -81,18 +97,36 @@ module itech32_inputs
 				dip_switches[7:4], sound_special,
 				~vblank, ~service_button, ~dip_switches[0]
 			};
-		end else if (profile.input_layout == INPUTS_BLOODSTORM) begin
-			// BloodStorm's 16-bit ports have zero upper bytes, with B2/B4/B5
-			// on the separate EXTRA port. Start/Coin stay in MiSTer slots10/11.
-			input_p1[23:16] = {~joystick_0_q[3:0], ~joystick_0_q[6],
-				~joystick_0_q[4], ~joystick_0_q[10], ~joystick_0_q[11]};
-			input_p2[23:16] = {~joystick_1_q[3:0], ~joystick_1_q[6],
-				~joystick_1_q[4], ~joystick_1_q[10], ~joystick_1_q[11]};
+		end else if (profile.input_layout == INPUTS_BLOODSTORM ||
+			profile.input_layout == INPUTS_HARDYARD ||
+			profile.input_layout == INPUTS_PAIRS) begin
+			// The bloodstm board's 16-bit ports have zero upper bytes. MiSTer
+			// B1..B5 are MAME BUTTON1..5; Start/Coin stay in slots 10/11.
+			// Unused P3 reads 0x00, unused P4/EXTRA read 0xff.
 			input_p4[23:16] = 8'hff;
-			input_extra[23:16] = {2'b11, ~joystick_1_q[8], ~joystick_0_q[8],
-				~joystick_1_q[7], ~joystick_0_q[7], ~joystick_1_q[5], ~joystick_0_q[5]};
+			input_extra[23:16] = 8'hff;
 			input_dips[23:16] = {dip_switches[3:0], sound_special,
 				~vblank, 1'b1, ~service_button};
+			case (profile.input_layout)
+				INPUTS_HARDYARD: begin
+					// Players 3/4 have no coin input; their bit 0 is unused.
+					input_p1[23:16] = player_16bit(joystick_0_q, joystick_0_q[5], joystick_0_q[11]);
+					input_p2[23:16] = player_16bit(joystick_1_q, joystick_1_q[5], joystick_1_q[11]);
+					input_p3[23:16] = player_16bit(joystick_2_q, joystick_2_q[5], 1'b0);
+					input_p4[23:16] = player_16bit(joystick_3_q, joystick_3_q[5], 1'b0);
+				end
+				INPUTS_PAIRS: begin
+					input_p1[23:16] = player_16bit(joystick_0_q, 1'b0, joystick_0_q[11]);
+					input_p2[23:16] = player_16bit(joystick_1_q, 1'b0, joystick_1_q[11]);
+				end
+				default: begin
+					// BloodStorm: B3 on bit 3, B2/B4/B5 on the EXTRA port.
+					input_p1[23:16] = player_16bit(joystick_0_q, joystick_0_q[6], joystick_0_q[11]);
+					input_p2[23:16] = player_16bit(joystick_1_q, joystick_1_q[6], joystick_1_q[11]);
+					input_extra[23:16] = {2'b11, ~joystick_1_q[8], ~joystick_0_q[8],
+						~joystick_1_q[7], ~joystick_0_q[7], ~joystick_1_q[5], ~joystick_0_q[5]};
+				end
+			endcase
 		end else begin
 			input_p1[16] = ~joystick_0_q[11];
 			input_p1[17] = ~joystick_0_q[10];

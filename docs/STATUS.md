@@ -7,8 +7,10 @@ build trees are intentionally not part of this repository.
 ## Included functionality
 
 - Street Fighter: The Movie v1.12, Time Killers v1.32, and BloodStorm v2.22
-  share one production core and have release MRAs under `releases/`.
-- Seventeen compatible revisions of those games have checksum-pinned MRAs under
+  share one production core and have release MRAs under `releases/`. Hard
+  Yardage, Pairs, Hot Memory, and Pairs Redemption were added on 2026-11-02 and
+  await hardware testing (see "Phase-1 games test build").
+- Twenty-one compatible revisions of those games have checksum-pinned MRAs under
   `releases/alternatives/`. Every SFTM revision uses the hardware-qualified
   selector `00` and `0x7a6a` protection address. See
   `docs/CLONE_SUPPORT.md` for the complete inventory, reproduction commands,
@@ -282,6 +284,44 @@ Preparation for further `itech32.cpp` games, with no intended behavior change:
   while the core clock was `+1.138 ns`. Utilization is 25,318 ALMs, 32,322
   registers, 444 RAM blocks, 48 DSP blocks, and 3 of 6 PLLs. RBF SHA-256:
   `2984ADF51A6241D6B21E29388ADC504EA08B011C49B5B7EE16047BF2C716A85D`.
+
+## Phase-1 games test build (2026-11-02)
+
+Adds the MAME `bloodstm`-machine joystick games, which share BloodStorm's board
+profile and differ only in controls:
+
+- Hard Yardage v1.20 (`hardyard`, selector `03`) with alternatives v1.10 and
+  v1.00. Four players: MiSTer joysticks 3 and 4 now reach the board's P3/P4
+  ports. Players 3/4 have no coin input, as in MAME.
+- Pairs V1.2 (`pairs`), Hot Memory V1.2 (`hotmemry`), and Pairs Redemption V1.0
+  (`pairsred`), all selector `04`, with alternatives Pairs V1 and Hot Memory
+  V1.1. One button per player. The redemption ticket dispenser is not read back
+  by MAME's input ports, and the core matches that.
+- Button names and DIP meanings come from the Strata operator manuals
+  ([Hard Yardage](https://www.arcade-museum.com/manuals-videogames/N/NFLHardYardage.pdf),
+  [Pairs](https://www.arcade-museum.com/manuals-videogames/P/Pairs.pdf)). Their
+  JAMMA tables put Hard Yardage Pass/Jump on button 1 and Select on button 2
+  (players 3/4 likewise on their own harnesses), and Pairs Select on button 1
+  with button 2 unwired, matching MAME's port bits. Both manuals' SW1 tables
+  agree with the MRA switch polarity. Pairs also has an operator "Control
+  Configurations" menu (one or two joysticks/Start buttons) that must match how
+  it is played. The Pairs Redemption control layout is assumed from Pairs.
+- No graphics-ROM wrap change was needed: MAME wraps at the declared `0x880000`
+  region for every one of these sets, so all use BloodStorm's 17 pages.
+- Each new ROM stream was compared byte-for-byte with the regions that MAME
+  0.288's `ROM_START` definitions load, at the core's DDR offsets (BloodStorm
+  passed as a control), and every MD5 reproduces from merged archives.
+- Simulation: new `family-inputs` bench (216 checks against a table written from
+  MAME's port definitions; rejects two planted wiring mutations). The full suite
+  passes 95 runs across 46 testbenches. Full-design lint reports no new
+  core-side warnings.
+- Quartus Prime Lite 17.0.2 (default seed): worst setup slack `+0.376 ns` (HDMI
+  scaler), core clock `+1.271 ns`, worst hold `+0.111 ns`, TNS `0` at all four
+  corners; post-fit HDMI check reports physical C5. Utilization is 25,259 ALMs,
+  32,336 registers, 444 RAM blocks, 48 DSP blocks, and 3 of 6 PLLs. RBF SHA-256:
+  `88DADE563985EF070B653404856B2AF70244080B35044C3D2983B313A67787C3`.
+- Not yet hardware-tested. This RBF also carries every audit change above, so it
+  supersedes the audit test build for hardware testing.
 
 ## Reproduction
 
