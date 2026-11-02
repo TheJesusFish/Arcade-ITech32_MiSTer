@@ -60,7 +60,7 @@ module itech32_bloodstorm_bus_env #(parameter bit USE_PROGRAM_ROM = 0) (
         .cpu_req(cpu_req), .cpu_we(cpu_we), .cpu_addr(cpu_addr), .cpu_wdata(cpu_wdata),
         .cpu_be(cpu_be), .cpu_ack(cpu_ack), .cpu_rdata(cpu_rdata),
         .input_p1(input_p1), .input_p2(input_p2), .input_p3(input_p3), .input_p4(input_p4),
-        .input_dips(input_dips), .input_extra(input_extra),
+        .input_dips(input_dips), .input_extra(input_extra), .trackball1(8'h00), .trackball2(8'h00),
 		.nvram_host_access(1'b0),
 		.nvram_host_write(1'b0), .nvram_host_addr(17'd0),
 		.nvram_host_wdata(16'd0), .nvram_host_rdata(), .nvram_host_ready(), .nvram_cpu_write(),

@@ -65,17 +65,40 @@ module itech32_game_selector_tb;
 			profile.sample_slots == {SAMPLE_EMPTY, SAMPLE_SLOT_B, SAMPLE_EMPTY, SAMPLE_SLOT_A})
 			else $fatal(1, "SELECTOR_PAIRS_FEATURES");
 		select(SELECT_BLOODSTORM);
-		assert (profile.input_layout == INPUTS_BLOODSTORM)
+		assert (profile.input_layout == INPUTS_BLOODSTORM &&
+			profile.trackball == TRACKBALL_NONE && !profile.pic_result_read &&
+			!profile.zero_578000)
 			else $fatal(1, "SELECTOR_BLOODSTORM_INPUTS");
-		select(8'h05);
-		expect_board("SFTM_FALLBACK_05", MAP_ITECH020, 1'b0, 1'b0, 1'b1, 7'd65);
+		// MAME init_wcbowl: bloodstm board plus trackball, PIC word at RAM
+		// 0x111c, and the zero-reading 0x578000 window; v1.3J adds trackball 2.
+		select(SELECT_WCBOWL);
+		expect_board("WCBOWL", MAP_BLOODSTORM, 1'b1, 1'b1, 1'b0, 7'd17);
+		assert (profile.input_layout == INPUTS_WCBOWL &&
+			profile.trackball == TRACKBALL_ONE && profile.pic_result_read &&
+			profile.protection_address == 15'h111c && profile.zero_578000 &&
+			profile.nvram_workram_bytes == 17'h10000 &&
+			profile.palette_format == PALETTE_BLOODSTORM &&
+			profile.sample_slots == {SAMPLE_EMPTY, SAMPLE_SLOT_B, SAMPLE_EMPTY, SAMPLE_SLOT_A})
+			else $fatal(1, "SELECTOR_WCBOWL_FEATURES");
+		select(SELECT_WCBOWL_J);
+		expect_board("WCBOWL_J", MAP_BLOODSTORM, 1'b1, 1'b1, 1'b0, 7'd17);
+		assert (profile.input_layout == INPUTS_WCBOWL &&
+			profile.trackball == TRACKBALL_TWO && profile.pic_result_read &&
+			profile.protection_address == 15'h111c && profile.zero_578000)
+			else $fatal(1, "SELECTOR_WCBOWL_J_FEATURES");
+		select(SELECT_TIMEKILL);
+		assert (!profile.zero_578000 && profile.trackball == TRACKBALL_NONE)
+			else $fatal(1, "SELECTOR_TIMEKILL_WINDOW");
+		select(8'h07);
+		expect_board("SFTM_FALLBACK_07", MAP_ITECH020, 1'b0, 1'b0, 1'b1, 7'd65);
 		select(8'hff);
 		expect_board("FALLBACK", MAP_ITECH020, 1'b0, 1'b0, 1'b1, 7'd65);
 		select(SELECT_SFTM);
 		assert (profile.protection_address == 15'h7a6a &&
-			profile.palette_format == PALETTE_DIRECT && profile.sound_last_bank == 8'd13)
+			profile.palette_format == PALETTE_DIRECT && profile.sound_last_bank == 8'd13 &&
+			profile.zero_578000 && profile.trackball == TRACKBALL_NONE)
 			else $fatal(1, "SELECTOR_SFTM_FEATURES");
-		$display("GAME_SELECTOR_PASS profiles=5 sftm_fallbacks=2");
+		$display("GAME_SELECTOR_PASS profiles=7 sftm_fallbacks=2");
 		$finish;
 	end
 endmodule

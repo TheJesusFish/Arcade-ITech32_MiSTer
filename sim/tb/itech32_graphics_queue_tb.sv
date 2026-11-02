@@ -39,7 +39,7 @@ module itech32_graphics_queue_tb;
         .clk(clk), .reset(board_reset), .profile(itech32_profile_tb_pkg::mode_profile_protection(1'b0, 1'b0, 15'd0)),
         .rom_buffer_invalidate(1'b0), .ce_cpu(1'b0), .ce_pixel(1'b0),
         .vector_load_we(1'b0), .vector_load_addr(5'd0), .vector_load_wdata(32'd0), .vector_load_be(4'd0),
-        .input_p1('1), .input_p2('1), .input_p3('1), .input_p4('1), .input_dips('1), .input_extra('1),
+        .input_p1('1), .input_p2('1), .input_p3('1), .input_p4('1), .input_dips('1), .input_extra('1), .trackball1(8'h00), .trackball2(8'h00),
         .nvram_host_access(1'b0), .nvram_host_write(1'b0),
         .nvram_host_addr(17'd0), .nvram_host_wdata(16'd0), .auxiliary_irq_level(3'd0),
         .program_rom_ack(1'b0), .program_rom_rdata(32'd0),

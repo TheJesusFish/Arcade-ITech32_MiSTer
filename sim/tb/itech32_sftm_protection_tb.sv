@@ -49,7 +49,7 @@ module itech32_sftm_protection_tb;
         .input_p3(32'd0),
         .input_p4(32'd0),
         .input_dips(32'd0),
-        .input_extra(32'd0),
+        .input_extra(32'd0), .trackball1(8'h00), .trackball2(8'h00),
 		.nvram_host_access(1'b0),
 		.nvram_host_write(1'b0),
 		.nvram_host_addr(17'd0),

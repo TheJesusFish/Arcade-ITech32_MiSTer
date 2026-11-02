@@ -1,9 +1,11 @@
 `timescale 1ns/1ps
-// Hard Yardage and Pairs controller vectors on the bloodstm board (MAME 0.288
-// itech32.cpp itech32_base_16bit, hardyard and pairs input ports). Every MiSTer
-// control of every player is pressed alone; all six ports are compared with an
-// explicit table written from the MAME port definitions. Players 3/4 must not
-// leak into any profile that does not wire them.
+// Hard Yardage, Pairs and World Class Bowling controller vectors on the
+// bloodstm board (MAME 0.288 itech32.cpp itech32_base_16bit, hardyard, pairs and
+// wcbowl input ports). Every MiSTer control of every player is pressed alone;
+// all six ports are compared with an explicit table written from the MAME port
+// definitions. Players 3/4 must not leak into any profile that does not wire
+// them. The bowling trackball ports are driven end to end from mouse packets
+// and sticks, including OSD ownership and boards without a trackball.
 module itech32_bloodstm_family_inputs_tb;
     import itech32_profile_pkg::*;
     logic clk = 0, reset = 1;
@@ -11,11 +13,17 @@ module itech32_bloodstm_family_inputs_tb;
     logic service_button = 0, vblank = 0, sound_special = 0;
     logic [7:0] dip_switches = 0;
     logic [31:0] input_p1, input_p2, input_p3, input_p4, input_dips, input_extra;
+    logic [15:0] analog_0 = 0, analog_1 = 0;
+    logic [24:0] ps2_mouse = 0;
+    logic mouse_ignore = 0;
+    logic [1:0] trackball_speed = 2'd2;
+    logic [7:0] trackball1, trackball2;
     logic [7:0] selector = SELECT_HARDYARD;
     board_profile_t profile;
     integer checks = 0;
     assign profile = profile_for_selector(selector);
-    itech32_inputs dut (.*);
+    // A 16 kHz "clock" makes the trackball release tick every 10 cycles.
+    itech32_inputs #(.CLK_HZ(16000)) dut (.*);
     always #5 clk = ~clk;
 
     function automatic logic [31:0] port(input logic [7:0] value);
@@ -53,6 +61,28 @@ module itech32_bloodstm_family_inputs_tb;
             0: joystick_0 = value; 1: joystick_1 = value;
             2: joystick_2 = value; default: joystick_3 = value;
         endcase
+    endtask
+
+    // MAME wcbowl P1/P2: Coin, Start, Hook Left (B1), Hook Right (B2).
+    function automatic logic [7:0] wcbowl_byte(input integer button);
+        case (button)
+            4:return 8'hfb; 5:return 8'hf7; 10:return 8'hfd; 11:return 8'hfe;
+            default:return 8'hff;
+        endcase
+    endfunction
+
+    // One hps_io mouse packet: flags byte (bit 3 set, sign bits 4/5), X, Y.
+    task automatic mouse_packet(input integer dx, input integer dy);
+        @(negedge clk);
+        ps2_mouse = {~ps2_mouse[24], 8'(dy), 8'(dx),
+            2'b00, dy < 0, dx < 0, 1'b1, 3'b000};
+    endtask
+
+    task automatic trackball_check(input string label, input logic [7:0] tb1, input logic [7:0] tb2);
+        if (trackball1 !== tb1 || trackball2 !== tb2)
+            $fatal(1, "FAMILY_INPUTS_%s tb1=%02x tb2=%02x expected %02x %02x",
+                label, trackball1, trackball2, tb1, tb2);
+        checks++;
     endtask
 
     task automatic release_all();
@@ -123,8 +153,49 @@ module itech32_bloodstm_family_inputs_tb;
             $fatal(1, "FAMILY_INPUTS_SFTM_P34 p1=%08x p2=%08x p3=%08x p4=%08x extra=%08x",
                 input_p1, input_p2, input_p3, input_p4, input_extra);
         checks++;
-        if (checks != 216) $fatal(1, "FAMILY_INPUTS_CASE_COUNT %0d", checks);
-        $display("FAMILY_INPUTS_PASS checks=%0d layouts=2", checks);
+        // World Class Bowling: Hook Left/Right on B1/B2; bits 4..7 unused (the
+        // d-pad moves the trackball instead); P3 0x00, P4/EXTRA 0xff.
+        @(negedge clk); #1; release_all(); selector = SELECT_WCBOWL;
+        @(posedge clk); #1;
+        expected("WCBOWL_IDLE", 8'hff, 8'hff, 8'h00, 8'hff, 8'hff, 8'h07);
+        for (integer player = 0; player < 2; player++) for (integer button = 0; button < 12; button++) begin
+            @(negedge clk); #1; press(player, 12'(1 << button));
+            @(posedge clk); #1;
+            expected("WCBOWL_PRESS",
+                player == 0 ? wcbowl_byte(button) : 8'hff,
+                player == 1 ? wcbowl_byte(button) : 8'hff, 8'h00, 8'hff, 8'hff, 8'h07);
+            @(negedge clk); #1; release_all();
+        end
+
+        // Trackball ports, end to end. Restart from reset so the d-pad presses
+        // above leave nothing pending.
+        @(negedge clk); reset = 1; @(negedge clk); reset = 0;
+        trackball_check("TB_RESET", 8'h00, 8'h00);
+        // 100%: mouse right 2 and forward 1 -> X -2, Y -1, one count per tick.
+        mouse_packet(2, 1);
+        repeat (60) @(negedge clk);
+        trackball_check("TB_MOUSE", 8'hfe, 8'h00);
+        // OSD owns the mouse: the packet is dropped, not replayed later.
+        mouse_ignore = 1; mouse_packet(-5, 0); repeat (60) @(negedge clk);
+        mouse_ignore = 0; repeat (60) @(negedge clk);
+        trackball_check("TB_IGNORED", 8'hfe, 8'h00);
+        // v1.0-1.5 have one trackball: player 2's stick moves nothing.
+        analog_1 = 16'h0040; repeat (60) @(negedge clk);
+        trackball_check("TB2_ABSENT", 8'hfe, 8'h00);
+        // v1.3J: player 2's stick right 64 is one count per tick, X falling.
+        selector = SELECT_WCBOWL_J; repeat (45) @(negedge clk);
+        if (trackball2[7:4] !== 4'h0 || trackball2[3:0] == 4'h0 || trackball1 !== 8'hfe)
+            $fatal(1, "FAMILY_INPUTS_TB2_J tb1=%02x tb2=%02x", trackball1, trackball2);
+        checks++;
+        analog_1 = 0;
+        // Boards without a trackball hold the counters and ignore the mouse.
+        selector = SELECT_BLOODSTORM; @(negedge clk);
+        mouse_packet(-3, -3); repeat (60) @(negedge clk);
+        if (trackball1 !== 8'hfe) $fatal(1, "FAMILY_INPUTS_TB_DISABLED tb1=%02x", trackball1);
+        checks++;
+
+        if (checks != 247) $fatal(1, "FAMILY_INPUTS_CASE_COUNT %0d", checks);
+        $display("FAMILY_INPUTS_PASS checks=%0d layouts=3", checks);
         $finish;
     end
 endmodule

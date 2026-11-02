@@ -393,10 +393,79 @@ def generate_hotmemry() -> list[Path]:
     return [write_alternative("Hot Memory", f"{title}.mra", text)]
 
 
+WCBOWL_PARENT = ("World Class Bowling (v1.5)", "wcbowl15", "wcbowl15.zip|wcbowl.zip",
+                 "acf9c6a80036659f7a426a6cf270054d")
+WCBOWL_PROGRAM = ("wcb_v1.5_u83.u83", "3ca9ab85", "wcb_v1.5_u88.u88", "d43e6fad")
+# setname, title, program, early sound board (v1.0 sound code and 2M samples),
+# Japan (selector 06: second trackball and its controls switch), MD5.
+WCBOWL_SPECS = (
+    ("wcbowl14", "World Class Bowling (v1.4)",
+     ("wcb_v1.4_u83.u83", "7086131f", "wcb_v1.4_u88.u88", "0225aac1"), False, False, "97463b038e13a4df62ad8b38eca7cc23"),
+    ("wcbowl13", "World Class Bowling (v1.3)",
+     ("wcb_v1.3_u83.u83", "2b6d284e", "wcb_v1.3_u88.u88", "039af877"), False, False, "99ef0195dd3e7208c67c74da48d07791"),
+    ("wcbowl13j", "World Class Bowling (v1.3J, Japan)",
+     ("wcb_v1.3j_u83.u83", "5805fd92", "wcb_v1.3j_u88.u88", "b846660e"), False, True, "1b4c0e28070db812927e613232dba9b2"),
+    ("wcbowl12", "World Class Bowling (v1.2)",
+     ("wcb_v1.2_u83.u83", "0602c5ce", "wcb_v1.2_u88.u88", "49573493"), False, False, "2d082c03162f3de61b7b0e3471ae5d8b"),
+    ("wcbowl11", "World Class Bowling (v1.1)",
+     ("wcb_v1.1_u83.u83", "d4902392", "wcb_v1.1_u88.u88", "ea81a95c"), True, False, "4750efd14e1aea21dea603958ee133ee"),
+    ("wcbowl10", "World Class Bowling (v1.0)",
+     ("wcb_v1.0_u83.u83", "675ad0b1", "wcb_v1.0_u88.u88", "3afbec1c"), True, False, "a6b7595c2a729fe5d97fb05d2f67502f"),
+)
+
+
+def generate_wcbowl() -> list[Path]:
+    template = (RELEASES / f"{WCBOWL_PARENT[0]}.mra").read_text(encoding="utf-8")
+    written = []
+    for setname, title, program, early_sound, japan, md5 in WCBOWL_SPECS:
+        parent_title, parent_set, parent_zip, parent_md5 = WCBOWL_PARENT
+        text = replace_once(template, f"<name>{parent_title}</name>", f"<name>{title}</name>", setname)
+        text = replace_once(text, f"<setname>{parent_set}</setname>",
+                            f"<setname>{setname}</setname>", setname)
+        text = replace_once(
+            text,
+            f'zip="{parent_zip}" address="0x30000000" md5="{parent_md5}"',
+            f'zip="{setname}.zip|wcbowl.zip" address="0x30000000" md5="{md5}"',
+            setname,
+        )
+        text = replace_once(text, bloodstm_program(WCBOWL_PROGRAM), bloodstm_program(program),
+                            setname)
+        if early_sound:
+            text = replace_once(text, bloodstm_sound("wcb_snd_v2.0.u17", "c14907ba"),
+                                bloodstm_sound("wcb_snd_v1.0.u17", "28f14071"), setname)
+            text = replace_once(text, '<part name="ensoniq_2mx16u.rom0" crc="0814ab80" map="01" />',
+                                '<part name="ensoniq_2m.rom0" crc="9fdc4825" map="01" />', setname)
+        if japan:
+            text = replace_once(text, "<manufacturer>Incredible Technologies</manufacturer>",
+                                "<manufacturer>Incredible Technologies (Excellent System Ltd. license)"
+                                "</manufacturer>", setname)
+            text = replace_once(text, "<region>World</region>", "<region>Japan</region>", setname)
+            text = replace_once(
+                text,
+                '        <dip name="Service Mode" bits="3" ids="Off,On" />',
+                '        <dip name="Controls" bits="2" ids="One Trackball,Two Trackballs" />\n'
+                '        <dip name="Service Mode" bits="3" ids="Off,On" />',
+                setname,
+            )
+            text = replace_once(
+                text,
+                "players take turns on one trackball.-->",
+                "with Two Trackballs, player 2 uses the second controller's stick or d-pad."
+                " MAME notes this set reads the ball at a 45-degree offset.-->",
+                setname,
+            )
+            text = replace_once(text, "<!--Board selector 05 must", "<!--Board selector 06 must",
+                                setname)
+            text = replace_once(text, "        <part>05</part>", "        <part>06</part>", setname)
+        written.append(write_alternative("World Class Bowling", f"{title}.mra", text))
+    return written
+
+
 def main() -> int:
     OUTPUT.mkdir(parents=True, exist_ok=True)
     written = (generate_timekill() + generate_bloodstorm() + generate_sftm() +
-               generate_hardyard() + generate_pairs() + generate_hotmemry())
+               generate_hardyard() + generate_pairs() + generate_hotmemry() +
+               generate_wcbowl())
     expected = {path.resolve() for path in written}
     actual = {path.resolve() for path in OUTPUT.rglob("*.mra")}
     if actual != expected:

@@ -34,7 +34,8 @@ assign VIDEO_ARY = (aspect == 0) ? 12'd3 : 12'd0;
 
 // Status bit map (bump v,N below whenever an assignment moves):
 //   0 Reset, 2:1 Aspect, 4:3 Stereo Mix, 7:5 Scandoubler Fx, 9:8 Audio Gain,
-//   10 Pause, 18 H-Scaler, 23:19 H-Scale, 29:24 CRT H, 35:30 CRT V.
+//   10 Pause, 12:11 Trackball Speed, 18 H-Scaler, 23:19 H-Scale, 29:24 CRT H,
+//   35:30 CRT V.
 `include "build_id.v"
 localparam CONF_STR = {
 	"ITech32;;",
@@ -52,6 +53,7 @@ localparam CONF_STR = {
 	"P2O[9:8],Audio Gain,1x,2x,4x;",
 	"-;",
 	"O[10],Pause When OSD Open,Off,On;",
+	"O[12:11],Trackball Speed,25%,50%,100%,200%;",
 	"-;",
 	"DIP;",
 	"T[0],Reset;",
@@ -84,6 +86,9 @@ wire  [11:0] game_joystick_0;
 wire  [11:0] game_joystick_1;
 wire  [11:0] game_joystick_2;
 wire  [11:0] game_joystick_3;
+wire  [15:0] joystick_analog_0;
+wire  [15:0] joystick_analog_1;
+wire  [24:0] ps2_mouse;
 
 // One free-running core PLL, named and instantiated as the framework expects
 // so sys_top.sdc constrains it. Never reset it: warm resets must not stop
@@ -121,6 +126,9 @@ hps_io #(.CONF_STR(CONF_STR), .WIDE(1)) hps_io
 	.joystick_1        (joystick_1),
 	.joystick_2        (joystick_2),
 	.joystick_3        (joystick_3),
+	.joystick_l_analog_0(joystick_analog_0),
+	.joystick_l_analog_1(joystick_analog_1),
+	.ps2_mouse         (ps2_mouse),
 	.ps2_key           ()
 );
 
@@ -204,6 +212,11 @@ itech32_core core
 	.joystick_1     (game_joystick_1),
 	.joystick_2     (game_joystick_2),
 	.joystick_3     (game_joystick_3),
+	.analog_0       (OSD_STATUS ? 16'd0 : joystick_analog_0),
+	.analog_1       (OSD_STATUS ? 16'd0 : joystick_analog_1),
+	.ps2_mouse      (ps2_mouse),
+	.mouse_ignore   (OSD_STATUS),
+	.trackball_speed(status[12:11]),
 	.DDRAM_CLK      (DDRAM_CLK),
 	.DDRAM_BUSY     (DDRAM_BUSY),
 	.DDRAM_BURSTCNT (DDRAM_BURSTCNT),

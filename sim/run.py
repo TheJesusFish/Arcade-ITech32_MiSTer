@@ -22,6 +22,7 @@ MEMORY = ["rtl/memory/itech32_ddr_sound_cache.sv", "rtl/memory/itech32_ddr_grom_
           "sys/f2sdram_safe_terminator.sv"]
 ES5506 = [SOUND + "itech32_es5506_par.sv", SOUND + "itech32_es5506.sv"]
 PAR_PINS = [SOUND + "itech32_es5506_par_pins.sv"]
+INPUTS = [CORE + "itech32_trackball.sv", CORE + "itech32_inputs.sv"]
 BLOOD_BUS = [CORE + "itech32_main_bus.sv", CORE + "itech32_blitter.sv",
              "sim/tb/itech32_bloodstorm_bus_env.sv"]
 SOUND_CACHE_PHASE = [CORE + "itech32_rate_enable.sv", *MEMORY,
@@ -61,9 +62,10 @@ TESTS = {
 								 compiler_args=("-Wno-PROCASSWIRE",)),
     "crt-adjust": test("itech32_crt_adjust_decode_tb", [CORE + "itech32_crt_adjust_decode.sv"]),
     "video-timing": test("itech32_video_timing_tb", [CORE + "itech32_video_timing.sv"]),
-    "inputs": test("itech32_inputs_tb", [CORE + "itech32_inputs.sv"]),
-    "blood-inputs": test("itech32_bloodstorm_inputs_tb", [CORE + "itech32_inputs.sv"]),
-    "family-inputs": test("itech32_bloodstm_family_inputs_tb", [CORE + "itech32_inputs.sv"]),
+    "trackball": test("itech32_trackball_tb", [CORE + "itech32_trackball.sv"]),
+    "inputs": test("itech32_inputs_tb", INPUTS),
+    "blood-inputs": test("itech32_bloodstorm_inputs_tb", INPUTS),
+    "family-inputs": test("itech32_bloodstm_family_inputs_tb", INPUTS),
     "cpu-adapter": test("itech32_tg68_bus_adapter_tb", [CORE + "itech32_tg68_bus_adapter.sv"]),
     "blitter": test("itech32_blitter_tb", [CORE + "itech32_blitter.sv"]),
     "graphics-queue": test("itech32_graphics_queue_tb",
@@ -75,6 +77,7 @@ TESTS = {
                            runs=(("+SEED=305419896",), ("+SEED=224680066",), ("+SEED=8675309",))),
     "rle-prefetch": test("itech32_rle_prefetch_tb", [CORE + "itech32_blitter.sv"]),
     "sftm-protection": test("itech32_sftm_protection_tb", [CORE + "itech32_main_bus.sv"]),
+    "wcbowl-bus": test("itech32_wcbowl_main_bus_tb", [CORE + "itech32_main_bus.sv"]),
     "blood-bus": test("itech32_bloodstorm_main_bus_tb", BLOOD_BUS),
     "blood-init": test("itech32_blood_init_ram_tb", BLOOD_BUS),
     "ddr": test("itech32_ddr_memory_tb", MEMORY, defines=("ITECH32_WRITE_OVERLAP",),

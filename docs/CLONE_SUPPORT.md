@@ -18,6 +18,8 @@ to match the release descriptors.
 | Hard Yardage | `hardyard11`, `hardyard10` | `03` | Same board as `hardyard`; not yet hardware-tested |
 | Pairs | `pairsa` | `04` | Same board as `pairs`; not yet hardware-tested |
 | Hot Memory | `hotmemry11` | `04` | Same board as `hotmemry`; not yet hardware-tested |
+| World Class Bowling | `wcbowl14`, `wcbowl13`, `wcbowl12`, `wcbowl11`, `wcbowl10` | `05` | Same 68000 board as `wcbowl15`; not yet hardware-tested |
+| World Class Bowling | `wcbowl13j` | `06` | Adds the second trackball port; not yet hardware-tested |
 
 The Time Killers descriptors account for both monolithic and discrete GROM
 board layouts. BloodStorm revisions 2.10, 1.10, and 1.04 select the older sound
@@ -33,11 +35,15 @@ Hard Yardage v1.00 selects its older sound program ROM. Hot Memory v1.1 has
 half-size program EPROMs; MAME fills the unused half of its program region with
 `0xff`, and the descriptor does the same. MAME makes Hot Memory a clone of
 Pairs, so its descriptors search `pairs.zip` after their own archive. Pairs
-Redemption has no clones.
+Redemption has no clones. World Class Bowling v1.1 and v1.0 select the older
+sound program and 2M sample ROM; v1.3J selects its own board profile (`06`) for
+the second trackball port and its Controls switch. MAME's parent `wcbowl`
+(v1.66) and the later bowling sets run on the 68EC020 board and are not yet
+supported.
 
 ## Reproduction and integrity
 
-Run `scripts/generate_alternative_mras.py` to recreate all 21 descriptors from
+Run `scripts/generate_alternative_mras.py` to recreate all 27 descriptors from
 the reviewed parent MRAs. Every index-0 ROM stream is exactly `0x2e00000` bytes
 and carries a pinned MD5. `scripts/verify_mra_roms.py` independently reproduces
 Main_MiSTer's checksum order, including merged archives, offsets, lengths,
@@ -66,8 +72,9 @@ ROM-derived fixture, checksum result, or capture is stored in this repository.
   reported `SYSTEM STATUS OK` after reload on the final production RBF. The six
   BloodStorm alternatives remain source/checksum-qualified; they were not each
   replayed through a full gameplay and NVRAM test on that exact RBF.
-- The Hard Yardage and Pairs-family descriptors (four parents, four
-  alternatives) reproduce their pinned MD5s from merged archives. Each assembled
+- The Hard Yardage, Pairs-family, and 68000 World Class Bowling descriptors
+  (five parents, ten alternatives) reproduce their pinned MD5s from merged
+  archives. Each assembled
   stream was also compared byte-for-byte with the regions that MAME 0.288's
   `ROM_START` definitions load, at the core's DDR offsets; the BloodStorm parent
   passed the same comparison as a control. They have not yet been run on MiSTer.

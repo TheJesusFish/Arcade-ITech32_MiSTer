@@ -39,7 +39,7 @@ module itech32_nvram_upload_race_tb;
 		.cpu_rdata(cpu_rdata),
 		.input_p1(32'hffff_ffff), .input_p2(32'hffff_ffff),
 		.input_p3(32'hffff_ffff), .input_p4(32'hffff_ffff),
-		.input_dips(32'hffff_ffff), .input_extra(32'hffff_ffff),
+		.input_dips(32'hffff_ffff), .input_extra(32'hffff_ffff), .trackball1(8'h00), .trackball2(8'h00),
 		.nvram_host_access(nvram_host_access),
 		.nvram_host_write(nvram_host_write),
 		.nvram_host_addr(nvram_host_addr),

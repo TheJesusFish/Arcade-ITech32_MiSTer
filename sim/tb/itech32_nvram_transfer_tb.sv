@@ -73,7 +73,7 @@ module itech32_nvram_transfer_tb;
 		.cpu_req(1'b0), .cpu_we(1'b0), .cpu_addr(24'd0),
 		.cpu_wdata(32'd0), .cpu_be(4'd0), .cpu_ack(), .cpu_rdata(),
 		.input_p1(32'd0), .input_p2(32'd0), .input_p3(32'd0),
-		.input_p4(32'd0), .input_dips(32'd0), .input_extra(32'd0),
+		.input_p4(32'd0), .input_dips(32'd0), .input_extra(32'd0), .trackball1(8'h00), .trackball2(8'h00),
 		.nvram_host_access(memory_access), .nvram_host_write(memory_write),
 		.nvram_host_addr(memory_addr), .nvram_host_wdata(memory_din),
 		.nvram_host_rdata(memory_dout), .nvram_host_ready(nvram_host_ready),

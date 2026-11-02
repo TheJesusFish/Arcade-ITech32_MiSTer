@@ -35,6 +35,12 @@ module itech32_core
 	input  logic [11:0] joystick_1,
 	input  logic [11:0] joystick_2,
 	input  logic [11:0] joystick_3,
+	// Trackball sources: left sticks, mouse packets, OSD-owned flag, speed.
+	input  logic [15:0] analog_0,
+	input  logic [15:0] analog_1,
+	input  logic [24:0] ps2_mouse,
+	input  logic        mouse_ignore,
+	input  logic [1:0]  trackball_speed,
 
 	output logic        DDRAM_CLK,
 	input  logic        DDRAM_BUSY,
@@ -99,6 +105,8 @@ module itech32_core
 	logic [31:0] input_p4;
 	logic [31:0] input_dips;
 	logic [31:0] input_extra;
+	logic [7:0]  trackball1;
+	logic [7:0]  trackball2;
 
 	logic vector_load_we;
 	logic [4:0] vector_load_addr;
@@ -237,10 +245,13 @@ module itech32_core
 		.ce_sound_2m(ce_sound_2m)
 	);
 
-	itech32_inputs inputs (
+	itech32_inputs #(.CLK_HZ(47_727_273)) inputs (
 		.clk(clk), .reset(platform_reset), .profile(profile),
 		.joystick_0(joystick_0), .joystick_1(joystick_1),
 		.joystick_2(joystick_2), .joystick_3(joystick_3),
+		.analog_0(analog_0), .analog_1(analog_1),
+		.ps2_mouse(ps2_mouse), .mouse_ignore(mouse_ignore),
+		.trackball_speed(trackball_speed),
 		.service_button(1'b0), .vblank(vblank),
 		// MAME toggles the phase before returning the side-effecting special
 		// read. Predict that value combinationally; the registered read strobe
@@ -248,7 +259,8 @@ module itech32_core
 		.sound_special(sound_special ^ sound_command_pending[0]),
 		.dip_switches(dip_switches),
 		.input_p1(input_p1), .input_p2(input_p2), .input_p3(input_p3),
-		.input_p4(input_p4), .input_dips(input_dips), .input_extra(input_extra)
+		.input_p4(input_p4), .input_dips(input_dips), .input_extra(input_extra),
+		.trackball1(trackball1), .trackball2(trackball2)
 	);
 
 	itech32_board #(
@@ -262,6 +274,7 @@ module itech32_core
 		.vector_load_wdata(vector_load_wdata), .vector_load_be(vector_load_be),
 		.input_p1(input_p1), .input_p2(input_p2), .input_p3(input_p3),
 		.input_p4(input_p4), .input_dips(input_dips), .input_extra(input_extra),
+		.trackball1(trackball1), .trackball2(trackball2),
 		.nvram_host_access(nvram_host_access),
 		.nvram_host_write(nvram_host_write),
 		.nvram_host_addr(nvram_host_addr),

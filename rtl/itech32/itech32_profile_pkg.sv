@@ -18,6 +18,8 @@ package itech32_profile_pkg;
 	localparam logic [7:0] SELECT_BLOODSTORM = 8'h02;
 	localparam logic [7:0] SELECT_HARDYARD   = 8'h03;
 	localparam logic [7:0] SELECT_PAIRS      = 8'h04; // also Hot Memory, Pairs Redemption
+	localparam logic [7:0] SELECT_WCBOWL     = 8'h05; // World Class Bowling v1.0-1.5
+	localparam logic [7:0] SELECT_WCBOWL_J   = 8'h06; // World Class Bowling v1.3J
 
 	// Main-CPU address map (MAME: itech020_map, timekill_map, bloodstm_map).
 	localparam logic [1:0] MAP_ITECH020   = 2'd0;
@@ -30,6 +32,13 @@ package itech32_profile_pkg;
 	localparam logic [2:0] INPUTS_BLOODSTORM = 3'd2;
 	localparam logic [2:0] INPUTS_HARDYARD   = 3'd3; // four players on P1..P4
 	localparam logic [2:0] INPUTS_PAIRS      = 3'd4; // one button per player
+	localparam logic [2:0] INPUTS_WCBOWL     = 3'd5; // two hook buttons, no joystick
+
+	// Trackball ports: two 4-bit position counters per trackball, read as
+	// (Y << 4) | X in the low byte of 0x680000, and of 0x680040 for a second.
+	localparam logic [1:0] TRACKBALL_NONE    = 2'd0;
+	localparam logic [1:0] TRACKBALL_ONE     = 2'd1;
+	localparam logic [1:0] TRACKBALL_TWO     = 2'd2;
 
 	// Palette RAM layout presented to the video output.
 	localparam logic [1:0] PALETTE_DIRECT     = 2'd0; // itech020 xRGB
@@ -57,8 +66,16 @@ package itech32_profile_pkg;
 		// nvram_workram_bytes of work RAM.
 		logic        nvram_dedicated;
 		logic [16:0] nvram_workram_bytes;
-		// Work-RAM byte returned by the itech020 protection read.
+		// Work-RAM address returned by the protection read: the byte read at
+		// itech020 0x680002, or the word read at 0x680080 with pic_result_read.
 		logic [14:0] protection_address;
+		// 68000 bowling ROM board: reads of 0x680080 return the security PIC's
+		// result, which MAME models as the work-RAM word at protection_address.
+		logic        pic_result_read;
+		// Reads of the unpopulated 0x578000-0x57ffff window return zero
+		// (MAME nop_read) instead of the board's open bus.
+		logic        zero_578000;
+		logic [1:0]  trackball;
 		// Blitter source bytes wrap modulo this many 512 KiB pages. The wrap
 		// logic supports 16..127 pages (8 MiB..63.5 MiB).
 		logic [6:0]  grom_pages;
@@ -82,6 +99,9 @@ package itech32_profile_pkg;
 			profile.nvram_dedicated     = 1'b1;
 			profile.nvram_workram_bytes = 17'h00000;
 			profile.protection_address  = 15'h7a6a;
+			profile.pic_result_read     = 1'b0;
+			profile.zero_578000         = 1'b1;
+			profile.trackball           = TRACKBALL_NONE;
 			profile.grom_pages          = 7'd65;
 			profile.sample_slots        = {SAMPLE_SLOT_B, SAMPLE_EMPTY,
 				SAMPLE_EMPTY, SAMPLE_SLOT_A};
@@ -97,20 +117,18 @@ package itech32_profile_pkg;
 					profile.nvram_dedicated     = 1'b0;
 					profile.nvram_workram_bytes = 17'h04000;
 					profile.protection_address  = 15'h0000;
+					profile.zero_578000         = 1'b0;
 					profile.grom_pages          = 7'd17;
 					profile.sample_slots        = {SAMPLE_EMPTY, SAMPLE_SLOT_A,
 						SAMPLE_EMPTY, SAMPLE_EMPTY};
 				end
-				// MAME's bloodstm machine: BloodStorm, Hard Yardage and the
-				// Pairs family share the board and differ only in controls.
-				SELECT_BLOODSTORM, SELECT_HARDYARD, SELECT_PAIRS: begin
+				// MAME's bloodstm machine: BloodStorm, Hard Yardage, the Pairs
+				// family and the 68000 World Class Bowling sets share the board.
+				SELECT_BLOODSTORM, SELECT_HARDYARD, SELECT_PAIRS,
+				SELECT_WCBOWL, SELECT_WCBOWL_J: begin
 					profile.cpu_68000           = 1'b1;
 					profile.memory_map          = MAP_BLOODSTORM;
-					case (selector)
-						SELECT_HARDYARD: profile.input_layout = INPUTS_HARDYARD;
-						SELECT_PAIRS:    profile.input_layout = INPUTS_PAIRS;
-						default:         profile.input_layout = INPUTS_BLOODSTORM;
-					endcase
+					profile.input_layout        = INPUTS_BLOODSTORM;
 					profile.palette_format      = PALETTE_BLOODSTORM;
 					profile.vram_two_planes     = 1'b0;
 					profile.sound_rev1          = 1'b1;
@@ -118,6 +136,23 @@ package itech32_profile_pkg;
 					profile.nvram_dedicated     = 1'b0;
 					profile.nvram_workram_bytes = 17'h10000;
 					profile.protection_address  = 15'h0000;
+					profile.zero_578000         = 1'b0;
+					case (selector)
+						SELECT_HARDYARD: profile.input_layout = INPUTS_HARDYARD;
+						SELECT_PAIRS:    profile.input_layout = INPUTS_PAIRS;
+						SELECT_WCBOWL, SELECT_WCBOWL_J: begin
+							// MAME init_wcbowl/init_wcbowlj: the ROM board adds
+							// trackball ports, the security PIC result, and a
+							// zero-reading window. v1.3J wires a second trackball.
+							profile.input_layout       = INPUTS_WCBOWL;
+							profile.trackball          = (selector == SELECT_WCBOWL_J) ?
+								TRACKBALL_TWO : TRACKBALL_ONE;
+							profile.pic_result_read    = 1'b1;
+							profile.protection_address = 15'h111c;
+							profile.zero_578000        = 1'b1;
+						end
+						default: begin end
+					endcase
 					profile.grom_pages          = 7'd17;
 					profile.sample_slots        = {SAMPLE_EMPTY, SAMPLE_SLOT_B,
 						SAMPLE_EMPTY, SAMPLE_SLOT_A};

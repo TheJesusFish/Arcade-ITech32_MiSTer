@@ -190,6 +190,9 @@ module itech32_main_bus
 	input  logic [31:0] input_p4,
 	input  logic [31:0] input_dips,
 	input  logic [31:0] input_extra,
+	// Trackball ports, (Y << 4) | X, read at 0x680000 and 0x680040.
+	input  logic [7:0]  trackball1,
+	input  logic [7:0]  trackball2,
 	input  logic        nvram_host_access,
 	input  logic        nvram_host_write,
 	input  logic [16:0] nvram_host_addr,
@@ -258,6 +261,7 @@ module itech32_main_bus
 	logic [31:0] main_ram_read_data;
 	logic        main_ram_read_pending;
 	logic        main_ram_read_is_protection;
+	logic        main_ram_protection_word;
 	logic [1:0]  main_ram_protection_lane;
 	logic        main_ram_write_enable;
 	logic [3:0]  main_ram_write_be;
@@ -307,7 +311,9 @@ module itech32_main_bus
 		TARGET_TIME_INTENSITY,
 		TARGET_TIME_NOP,
 		TARGET_SFTM_UNMAPPED,
-		TARGET_EXTRA
+		TARGET_EXTRA,
+		TARGET_TRACKBALL,
+		TARGET_PIC_RESULT
 	} bus_target_t;
 	bus_target_t bus_target_q;
 	bus_target_t accept_target;
@@ -383,9 +389,11 @@ module itech32_main_bus
 	function automatic bus_target_t decode_bus_target(
 		input logic        write_cycle,
 		input logic [23:0] address,
-		input logic [1:0]  memory_map
+		input board_profile_t profile
 	);
+		logic [1:0] memory_map;
 		begin
+			memory_map = profile.memory_map;
 			// Capture the board-specific open-read policy in the existing tag.
 			// MAME's itech020_map uses zero for unhandled SFTM reads; the ROM's
 			// 0x041107 probe relies on it. Keep the Time Killers map unchanged.
@@ -452,6 +460,19 @@ module itech32_main_bus
 					decode_bus_target = TARGET_PLANE;
 				else if (!write_cycle && address >= 24'h780000 && address <= 24'h780001)
 					decode_bus_target = TARGET_EXTRA;
+				// ROM-board additions (MAME init_wcbowl/init_wcbowlj).
+				else if (!write_cycle && profile.zero_578000 &&
+					address >= 24'h578000 && address <= 24'h57ffff)
+					decode_bus_target = TARGET_OPEN_578;
+				else if (!write_cycle && profile.trackball != TRACKBALL_NONE &&
+					address >= 24'h680000 && address <= 24'h680001)
+					decode_bus_target = TARGET_TRACKBALL;
+				else if (!write_cycle && profile.trackball == TRACKBALL_TWO &&
+					address >= 24'h680040 && address <= 24'h680041)
+					decode_bus_target = TARGET_TRACKBALL;
+				else if (!write_cycle && profile.pic_result_read &&
+					address >= 24'h680080 && address <= 24'h680081)
+					decode_bus_target = TARGET_PIC_RESULT;
 				else if (!write_cycle && address[23])
 					decode_bus_target = TARGET_ROM;
 			end else if (address < 24'h008000)
@@ -479,7 +500,8 @@ module itech32_main_bus
 				decode_bus_target = TARGET_SOUND_COMMAND;
 			else if (address >= 24'h500000 && address <= 24'h5000ff)
 				decode_bus_target = TARGET_VIDEO;
-			else if (!write_cycle && address >= 24'h578000 && address <= 24'h57ffff)
+			else if (!write_cycle && profile.zero_578000 &&
+				address >= 24'h578000 && address <= 24'h57ffff)
 				decode_bus_target = TARGET_OPEN_578;
 			else if (address >= 24'h580000 && address <= 24'h59ffff)
 				decode_bus_target = TARGET_PALETTE;
@@ -496,7 +518,7 @@ module itech32_main_bus
 		end
 	endfunction
 
-	assign accept_target = decode_bus_target(cpu_we, cpu_addr, profile.memory_map);
+	assign accept_target = decode_bus_target(cpu_we, cpu_addr, profile);
 	// Ordinary work-RAM reads use the adapter's already-registered accepted
 	// address for the synchronous probe, then the existing pending response
 	// register. Protection, palette, NVRAM and writes keep their old schedule.
@@ -542,7 +564,8 @@ module itech32_main_bus
 	always_comb begin
 		if (main_ram_accept_read)
 			main_ram_read_addr = cpu_addr[15:2];
-		else if (bus_target_q == TARGET_PROTECTION_READ)
+		else if (bus_target_q == TARGET_PROTECTION_READ ||
+			bus_target_q == TARGET_PIC_RESULT)
 			main_ram_read_addr = {1'b0, profile.protection_address[14:2]};
 		else
 			main_ram_read_addr = bus_addr_q[15:2];
@@ -767,6 +790,7 @@ module itech32_main_bus
 			timekill_intensity          <= 8'h60;
 			main_ram_read_pending       <= 1'b0;
 			main_ram_read_is_protection <= 1'b0;
+			main_ram_protection_word    <= 1'b0;
 			main_ram_protection_lane    <= 2'd0;
 			palette_read_pending         <= 1'b0;
 			nvram_read_pending           <= 1'b0;
@@ -809,7 +833,11 @@ module itech32_main_bus
 			end
 
 			if (main_ram_read_pending) begin
-				if (main_ram_read_is_protection)
+				// The PIC result is a whole 68000 word; either bus half carries it.
+				if (main_ram_read_is_protection && main_ram_protection_word)
+					cpu_rdata <= {2{main_ram_protection_lane[1] ?
+						main_ram_read_data[15:0] : main_ram_read_data[31:16]}};
+				else if (main_ram_read_is_protection)
 					cpu_rdata <= place_addressed_byte(
 						select_addressed_byte(main_ram_read_data,
 							main_ram_protection_lane), 2'd2);
@@ -980,11 +1008,19 @@ module itech32_main_bus
 						else
 							nvram_read_pending <= 1'b1;
 					end
-					TARGET_PROTECTION_READ: begin
+					TARGET_PROTECTION_READ, TARGET_PIC_RESULT: begin
 						bus_pending <= 1'b0;
 						main_ram_read_pending <= 1'b1;
 						main_ram_read_is_protection <= 1'b1;
+						main_ram_protection_word <= bus_target_q == TARGET_PIC_RESULT;
 						main_ram_protection_lane <= profile.protection_address[1:0];
+					end
+					TARGET_TRACKBALL: begin
+						// Low byte of the 16-bit port; 0x680040 is the second.
+						cpu_rdata <= {8'h00, bus_addr_q[6] ? trackball2 : trackball1,
+							16'h0000};
+						cpu_ack <= 1'b1;
+						bus_pending <= 1'b0;
 					end
 					TARGET_PROTECTION_RANGE: begin
 						cpu_rdata <= 32'hffff_ffff;

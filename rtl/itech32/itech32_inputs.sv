@@ -5,6 +5,9 @@
 
 module itech32_inputs
 	import itech32_profile_pkg::*;
+#(
+	parameter int CLK_HZ = 47_727_273
+)
 (
 	input  logic        clk,
 	input  logic        reset,
@@ -13,6 +16,14 @@ module itech32_inputs
 	input  logic [11:0] joystick_1,
 	input  logic [11:0] joystick_2,
 	input  logic [11:0] joystick_3,
+	// MiSTer left sticks for players 1/2: [15:8] Y, [7:0] X, signed.
+	input  logic [15:0] analog_0,
+	input  logic [15:0] analog_1,
+	// hps_io ps2_mouse: [24] toggles per packet, PS/2 flags/X/Y bytes.
+	input  logic [24:0] ps2_mouse,
+	// Discard mouse packets (the OSD owns the input).
+	input  logic        mouse_ignore,
+	input  logic [1:0]  trackball_speed,
 	input  logic        service_button,
 	input  logic        vblank,
 	input  logic        sound_special,
@@ -24,7 +35,10 @@ module itech32_inputs
 	output logic [31:0] input_p3,
 	output logic [31:0] input_p4,
 	output logic [31:0] input_dips,
-	output logic [31:0] input_extra
+	output logic [31:0] input_extra,
+	// Trackball ports, (Y << 4) | X.
+	output logic [7:0]  trackball1,
+	output logic [7:0]  trackball2
 );
 	logic [11:0] joystick_0_q;
 	logic [11:0] joystick_1_q;
@@ -49,6 +63,57 @@ module itech32_inputs
 			joystick_3_q <= joystick_3[11:0];
 		end
 	end
+
+	// Trackball count release: 1600 Hz keeps a 3.8 ms read gap (MAME's 3.5 ms
+	// longest World Class Bowling gap, stretched to this core's frame rate)
+	// at six counts, inside the 4-bit counters' +-7 reach.
+	localparam int TICK_CYCLES = CLK_HZ / 1600;
+	localparam int TICK_W = $clog2(TICK_CYCLES);
+	localparam logic [31:0] TICK_LAST = TICK_CYCLES - 1;
+	logic [TICK_W-1:0] tick_count_q;
+	logic trackball_tick;
+	logic mouse_toggle_q;
+	logic mouse_valid;
+	logic [3:0] tb1_x, tb1_y, tb2_x, tb2_y;
+
+	always_ff @(posedge clk) begin
+		if (reset || trackball_tick)
+			tick_count_q <= '0;
+		else
+			tick_count_q <= tick_count_q + 1'b1;
+		mouse_toggle_q <= ps2_mouse[24];
+	end
+	assign trackball_tick = tick_count_q == TICK_LAST[TICK_W-1:0];
+	// The toggle is tracked even while ignored, so no stale packet replays.
+	assign mouse_valid = (ps2_mouse[24] != mouse_toggle_q) && !mouse_ignore && !reset;
+
+	// Player 1's ball takes the mouse, stick and d-pad; player 2's the second
+	// controller's stick and d-pad. The d-pad only moves a ball on boards
+	// that have one.
+	itech32_trackball trackball_p1 (
+		.clk(clk), .reset(reset),
+		.enable(profile.trackball != TRACKBALL_NONE),
+		.tick(trackball_tick), .speed(trackball_speed),
+		.mouse_valid(mouse_valid),
+		.mouse_dx({ps2_mouse[4], ps2_mouse[15:8]}),
+		.mouse_dy({ps2_mouse[5], ps2_mouse[23:16]}),
+		.stick_x(analog_0[7:0]), .stick_y(analog_0[15:8]),
+		.dpad(joystick_0_q[3:0]),
+		.count_x(tb1_x), .count_y(tb1_y)
+	);
+
+	itech32_trackball trackball_p2 (
+		.clk(clk), .reset(reset),
+		.enable(profile.trackball == TRACKBALL_TWO),
+		.tick(trackball_tick), .speed(trackball_speed),
+		.mouse_valid(1'b0), .mouse_dx(9'sd0), .mouse_dy(9'sd0),
+		.stick_x(analog_1[7:0]), .stick_y(analog_1[15:8]),
+		.dpad(joystick_1_q[3:0]),
+		.count_x(tb2_x), .count_y(tb2_y)
+	);
+
+	assign trackball1 = {tb1_y, tb1_x};
+	assign trackball2 = {tb2_y, tb2_x};
 
 	// MiSTer joystick ordering follows the CONF_STR J field: directions in
 	// bits 0..3, then B1..B6 in 4..9, Start 10 and Coin 11.
@@ -99,7 +164,8 @@ module itech32_inputs
 			};
 		end else if (profile.input_layout == INPUTS_BLOODSTORM ||
 			profile.input_layout == INPUTS_HARDYARD ||
-			profile.input_layout == INPUTS_PAIRS) begin
+			profile.input_layout == INPUTS_PAIRS ||
+			profile.input_layout == INPUTS_WCBOWL) begin
 			// The bloodstm board's 16-bit ports have zero upper bytes. MiSTer
 			// B1..B5 are MAME BUTTON1..5; Start/Coin stay in slots 10/11.
 			// Unused P3 reads 0x00, unused P4/EXTRA read 0xff.
@@ -118,6 +184,14 @@ module itech32_inputs
 				INPUTS_PAIRS: begin
 					input_p1[23:16] = player_16bit(joystick_0_q, 1'b0, joystick_0_q[11]);
 					input_p2[23:16] = player_16bit(joystick_1_q, 1'b0, joystick_1_q[11]);
+				end
+				INPUTS_WCBOWL: begin
+					// Hook Left/Right on B1/B2; bits 4..7 are unused (the
+					// d-pad drives the trackball instead).
+					input_p1[23:16] = player_16bit({joystick_0_q[11:4], 4'd0},
+						joystick_0_q[5], joystick_0_q[11]);
+					input_p2[23:16] = player_16bit({joystick_1_q[11:4], 4'd0},
+						joystick_1_q[5], joystick_1_q[11]);
 				end
 				default: begin
 					// BloodStorm: B3 on bit 3, B2/B4/B5 on the EXTRA port.

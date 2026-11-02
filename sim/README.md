@@ -73,11 +73,13 @@ explicit `*_PASS` assertion message and zero simulation errors.
 | `game-selector` | Decoded board profile for every selector plus unsupported-selector SFTM fallback |
 | `nvram-save-request`, `nvram-io`, `nvram-memory`, `nvram-transfer` | One save per dirty OSD-opening edge, MiSTer upload/dirty protocol and RAM-grant wait, all three backing stores, bounds and byte lanes, plus an exact WIDE=1 `hps_io` save/restore round trip |
 | `nvram-upload-race` | CPU reads/writes in flight when an upload starts: drained with the CPU's own address, new accesses held until the RAM is returned, host data correct |
-| `inputs`, `blood-inputs`, `family-inputs` | Input and DIP mapping, including four-player Hard Yardage and one-button Pairs |
+| `inputs`, `blood-inputs`, `family-inputs` | Input and DIP mapping, including four-player Hard Yardage, one-button Pairs, World Class Bowling, and the trackball ports end to end |
+| `trackball` | Mouse/stick/d-pad trackball emulation: orientation, gain, one count per release tick, saturation, dead zone, plus a randomized reference-model comparison |
 | `cpu-adapter` | TG68 bus-adapter handshake |
 | `blitter`, `rle-prefetch` | Synthetic blits and RLE prefetch behavior |
 | `graphics-queue` | Production board/main bus/blitter/gather/FIFO/forward slice and DDR service/terminator together; delayed writes, full/wrapped FIFO, ordered completion/readback, partial qwords, both planes, repeated addresses, raw/RLE/copy commands, and board-reset cancellation |
 | `sftm-protection` | SFTM zero-read protection source, protected-byte lane, and unchanged Time Killers/BloodStorm open-bus policy |
+| `wcbowl-bus` | World Class Bowling ROM-board reads: trackball ports, security-PIC result word, zero window, and unchanged BloodStorm open bus |
 | `blood-bus`, `blood-init` | BloodStorm bus decode and initial-RAM behavior |
 | `ddr` | Memory service, resident reads, reset, and write overlap |
 | `audio-arbitration` | Audio qword service and cancellation/edge cases |

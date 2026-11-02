@@ -8,9 +8,10 @@ build trees are intentionally not part of this repository.
 
 - Street Fighter: The Movie v1.12, Time Killers v1.32, and BloodStorm v2.22
   share one production core and have release MRAs under `releases/`. Hard
-  Yardage, Pairs, Hot Memory, and Pairs Redemption were added on 2026-11-02 and
-  await hardware testing (see "Phase-1 games test build").
-- Twenty-one compatible revisions of those games have checksum-pinned MRAs under
+  Yardage, Pairs, Hot Memory, Pairs Redemption, and World Class Bowling were
+  added on 2026-11-02 and await hardware testing (see "Phase-1 games test build"
+  and "World Class Bowling test build").
+- Twenty-seven compatible revisions of those games have checksum-pinned MRAs under
   `releases/alternatives/`. Every SFTM revision uses the hardware-qualified
   selector `00` and `0x7a6a` protection address. See
   `docs/CLONE_SUPPORT.md` for the complete inventory, reproduction commands,
@@ -322,6 +323,42 @@ profile and differ only in controls:
   `88DADE563985EF070B653404856B2AF70244080B35044C3D2983B313A67787C3`.
 - Not yet hardware-tested. This RBF also carries every audit change above, so it
   supersedes the audit test build for hardware testing.
+
+## World Class Bowling test build (2026-11-02)
+
+Adds the 68000 World Class Bowling sets, the first trackball game:
+
+- World Class Bowling v1.5 (`wcbowl15`, selector `05`) with alternatives v1.4,
+  v1.3, v1.2, v1.1, v1.0, and v1.3J (`wcbowl13j`, selector `06`, second
+  trackball port). They use BloodStorm's board plus MAME `init_wcbowl`'s ROM-board
+  additions: trackball ports, the security PIC result word, and zero reads from
+  `0x578000-0x57ffff`. SFTM's existing zero window now comes from the same
+  profile field.
+- Trackball: board-side 4-bit X/Y counters read as `(Y << 4) | X`; a USB mouse or
+  trackball, the left stick, or the d-pad drives them through a saturating
+  accumulator released at one count per 1600 Hz tick. The OSD's Trackball Speed
+  (25/50/100/200%) sets the gain. The release rate comes from a MAME 0.288
+  measurement: the game reads the port in eight pairs per frame with a longest
+  gap of about 3.5 ms. Main_MiSTer's PS/2 packets carry +Y forward. See
+  "Trackballs" in `docs/DEVELOPMENT.md`.
+- Button names come from the operator
+  [manual](https://www.arcade-museum.com/manuals-videogames/W/World_Class_Bowling__1995__Incredible_Technologies.pdf):
+  Hook Left (JAMMA button 1) and Hook Right (button 2) add spin, and the
+  trackball rolls the ball. The service menus are also trackball-driven.
+- All seven ROM streams match MAME's loaded regions byte-for-byte and reproduce
+  their MD5s from the merged archive.
+- Simulation: new `trackball` bench (directed cases plus a 200,000-cycle
+  randomized reference-model run) and `wcbowl-bus` bench; `family-inputs` and
+  `game-selector` extended. The full suite passes 97 runs across 48 testbenches.
+  Five planted mutations (mouse X sign, release rate, PIC word half, zero window
+  scope, OSD mouse gating) were each rejected. Full-design lint reports no new
+  core-side warnings.
+- Quartus Prime Lite 17.0.2 (default seed): worst setup slack `+0.532 ns` (HDMI
+  scaler), core clock `+1.262 ns`, worst hold `+0.091 ns`, TNS `0` at all four
+  corners; post-fit HDMI check reports physical C5. Utilization is 25,693 ALMs,
+  32,525 registers, 444 RAM blocks, 48 DSP blocks, and 3 of 6 PLLs. RBF SHA-256:
+  `533BE1C9F7B78B2A03F5A89DA961BE8352450379E79A501C8E2C71A607FD9834`.
+- Not yet hardware-tested. This RBF supersedes the phase-1 test build.
 
 ## Reproduction
 

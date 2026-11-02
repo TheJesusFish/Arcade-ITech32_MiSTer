@@ -33,7 +33,8 @@
 Every per-game hardware difference lives in `rtl/itech32/itech32_profile_pkg.sv`
 as a field of `board_profile_t`: CPU type, MAME address-map family, input
 layout, palette format, framebuffer planes, sound-board revision and bank count,
-battery-RAM layout, protection address, graphics-ROM size, and the ES5506
+battery-RAM layout, protection reads, ROM-board additions (trackball ports and
+the zero-reading `0x578000` window), graphics-ROM size, and the ES5506
 sample-bank map. The MRA writes one selector byte at index 1;
 `itech32_game_selector` registers the matching profile, and each block reads
 only the fields it needs. Blocks must not test game identity.
@@ -51,8 +52,28 @@ To add a game:
    the ROM-free tests and the game-selector bench.
 
 Selectors in use: `00` SFTM, `01` Time Killers, `02` BloodStorm, `03` Hard
-Yardage, `04` Pairs, Hot Memory, and Pairs Redemption. `03` and `04` share
-BloodStorm's row (MAME's `bloodstm` machine) and change only the input layout.
+Yardage, `04` Pairs, Hot Memory, and Pairs Redemption, `05` World Class Bowling
+v1.0-1.5, `06` World Class Bowling v1.3J. `03`-`06` share BloodStorm's row
+(MAME's `bloodstm` machine). `03` and `04` change only the input layout; `05`
+and `06` also take MAME `init_wcbowl`'s ROM-board additions: a trackball port at
+`0x680000` (and `0x680040` on v1.3J), the security PIC result at `0x680080`
+(MAME's model: the work-RAM word at `protection_address` `0x111c`), and zero
+reads from `0x578000-0x57ffff`.
+
+### Trackballs
+
+`itech32_trackball` keeps the board-side state the game reads: two 4-bit
+position counters per ball, packed `(Y << 4) | X`, matching MAME `trackball_r`.
+The MiSTer side stands in for the ball: mouse packets (player 1), the left
+stick, or the d-pad add movement to a saturating accumulator in 1/16 counts,
+scaled by the OSD Trackball Speed (25% matches MAME's default sensitivity). One
+count is released per 1600 Hz tick. That rate comes from a measurement: in MAME
+0.288, World Class Bowling reads the port in eight pairs per frame with a
+longest gap of about 3.5 ms (3.8 ms at this core's frame rate), and a 4-bit
+counter aliases beyond seven counts between reads. Orientation follows MAME's
+ports: X is reversed and Y falls as the ball rolls forward. Main_MiSTer sends
+PS/2 packets with +Y forward. Mouse packets are discarded while the OSD is
+open.
 
 The graphics-ROM page count is MAME's `grom` region size, not the amount of
 ROM loaded: MAME wraps blitter reads at `m_grom.length()`. Every
