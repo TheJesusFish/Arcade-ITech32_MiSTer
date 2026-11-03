@@ -21,7 +21,8 @@ module itech32_nvram_io #(
 	input  logic        memory_ready,
 	output logic        memory_access,
 	output logic        memory_write,
-	output logic [16:0] memory_addr,
+	// Byte address: 0x00000-0x1ffff NVRAM, then the timekeeper from 0x20000.
+	output logic [17:0] memory_addr,
 	output logic [15:0] memory_din,
 	output logic [15:0] ioctl_din,
 	output logic        ioctl_wait,
@@ -30,16 +31,16 @@ module itech32_nvram_io #(
 );
 	localparam integer COUNT_WIDTH = $clog2(PREFETCH_CYCLES + 1);
 	logic selected_upload_q = 1'b0;
-	logic [16:0] upload_addr_q = 17'd0;
+	logic [17:0] upload_addr_q = 18'd0;
 	logic [COUNT_WIDTH-1:0] prefetch_count = COUNT_WIDTH'(PREFETCH_CYCLES);
 
 	wire selected_download = ioctl_download && ioctl_index == NVRAM_INDEX;
 	wire selected_upload = ioctl_upload && ioctl_index == NVRAM_INDEX;
-	wire upload_address_changed = ioctl_addr[16:0] != upload_addr_q;
+	wire upload_address_changed = ioctl_addr[17:0] != upload_addr_q;
 
 	assign memory_access = selected_download || selected_upload;
 	assign memory_write = selected_download && ioctl_wr;
-	assign memory_addr = ioctl_addr[16:0];
+	assign memory_addr = ioctl_addr[17:0];
 	assign memory_din = ioctl_dout;
 	assign ioctl_din = memory_dout;
 	assign runtime_hold = selected_upload;
@@ -53,13 +54,13 @@ module itech32_nvram_io #(
 	always_ff @(posedge clk) begin
 		selected_upload_q <= selected_upload;
 		if (reset) begin
-			upload_addr_q <= 17'd0;
+			upload_addr_q <= 18'd0;
 			prefetch_count <= COUNT_WIDTH'(PREFETCH_CYCLES);
 			dirty <= 1'b0;
 		end else begin
 			if (!selected_upload || !memory_ready || !selected_upload_q ||
 				upload_address_changed) begin
-				upload_addr_q <= ioctl_addr[16:0];
+				upload_addr_q <= ioctl_addr[17:0];
 				prefetch_count <= COUNT_WIDTH'(PREFETCH_CYCLES);
 			end else if (prefetch_count != 0) begin
 				prefetch_count <= prefetch_count - 1'b1;

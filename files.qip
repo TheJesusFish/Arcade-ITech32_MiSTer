@@ -15,7 +15,12 @@ set_global_assignment -name SYSTEMVERILOG_FILE rtl/itech32/itech32_vram_arbiter.
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/itech32/itech32_main_bus.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/itech32/itech32_blitter.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/itech32/itech32_trackball.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/itech32/itech32_lightgun.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/itech32/itech32_inputs.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/itech32/itech32_keyboard.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/itech32/itech32_timekeeper.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/itech32/itech32_gun_irq.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/itech32/itech32_crosshair.sv
 set_global_assignment -name VHDL_FILE rtl/cpu/tg68k/TG68K_Pack.vhd
 set_global_assignment -name VHDL_FILE rtl/cpu/tg68k/TG68K_ALU.vhd
 set_global_assignment -name VHDL_FILE rtl/cpu/tg68k/TG68KdotC_Kernel.vhd

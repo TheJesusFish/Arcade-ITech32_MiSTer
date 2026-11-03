@@ -34,7 +34,8 @@ assign VIDEO_ARY = (aspect == 0) ? 12'd3 : 12'd0;
 
 // Status bit map (bump v,N below whenever an assignment moves):
 //   0 Reset, 2:1 Aspect, 4:3 Stereo Mix, 7:5 Scandoubler Fx, 9:8 Audio Gain,
-//   10 Pause, 12:11 Trackball Speed, 18 H-Scaler, 23:19 H-Scale, 29:24 CRT H,
+//   10 Pause, 12:11 Trackball Speed, 13 Light Gun Stick, 14 Crosshair,
+//   18 H-Scaler, 23:19 H-Scale, 29:24 CRT H,
 //   35:30 CRT V.
 `include "build_id.v"
 localparam CONF_STR = {
@@ -54,6 +55,8 @@ localparam CONF_STR = {
 	"-;",
 	"O[10],Pause When OSD Open,Off,On;",
 	"O[12:11],Trackball Speed,25%,50%,100%,200%;",
+	"O[13],Light Gun Stick,Relative,Absolute;",
+	"O[14],Crosshair,On,Off;",
 	"-;",
 	"DIP;",
 	"T[0],Reset;",
@@ -89,6 +92,10 @@ wire  [11:0] game_joystick_3;
 wire  [15:0] joystick_analog_0;
 wire  [15:0] joystick_analog_1;
 wire  [24:0] ps2_mouse;
+wire  [10:0] ps2_key;
+wire  [64:0] rtc;
+wire  [11:0] key_joystick_0;
+wire  [11:0] key_joystick_1;
 
 // One free-running core PLL, named and instantiated as the framework expects
 // so sys_top.sdc constrains it. Never reset it: warm resets must not stop
@@ -129,7 +136,8 @@ hps_io #(.CONF_STR(CONF_STR), .WIDE(1)) hps_io
 	.joystick_l_analog_0(joystick_analog_0),
 	.joystick_l_analog_1(joystick_analog_1),
 	.ps2_mouse         (ps2_mouse),
-	.ps2_key           ()
+	.ps2_key           (ps2_key),
+	.RTC               (rtc)
 );
 
 // RESET includes HPS warm reset. Keep it away from the persistent DDR loader
@@ -184,10 +192,16 @@ wire core_active;
 wire signed [15:0] core_audio_left;
 wire signed [15:0] core_audio_right;
 wire core_audio_strobe;
+// MAME's default keys act as controllers 1 and 2 (arrows move a trackball).
+itech32_keyboard keyboard (
+	.clk(clk_sys), .reset(memory_reset), .clear(OSD_STATUS), .ps2_key(ps2_key),
+	.joystick_0(key_joystick_0), .joystick_1(key_joystick_1)
+);
+
 // The framework owns the OSD while it is open.  Keep board inputs quiet during
 // that interval, but otherwise pass the mapped controller payload unchanged.
-assign game_joystick_0 = OSD_STATUS ? 12'd0 : joystick_0[11:0];
-assign game_joystick_1 = OSD_STATUS ? 12'd0 : joystick_1[11:0];
+assign game_joystick_0 = OSD_STATUS ? 12'd0 : joystick_0[11:0] | key_joystick_0;
+assign game_joystick_1 = OSD_STATUS ? 12'd0 : joystick_1[11:0] | key_joystick_1;
 assign game_joystick_2 = OSD_STATUS ? 12'd0 : joystick_2[11:0];
 assign game_joystick_3 = OSD_STATUS ? 12'd0 : joystick_3[11:0];
 
@@ -217,6 +231,9 @@ itech32_core core
 	.ps2_mouse      (ps2_mouse),
 	.mouse_ignore   (OSD_STATUS),
 	.trackball_speed(status[12:11]),
+	.lightgun_absolute(status[13]),
+	.crosshair      (!status[14]),
+	.rtc            (rtc),
 	.DDRAM_CLK      (DDRAM_CLK),
 	.DDRAM_BUSY     (DDRAM_BUSY),
 	.DDRAM_BURSTCNT (DDRAM_BURSTCNT),

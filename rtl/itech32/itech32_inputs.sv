@@ -24,6 +24,8 @@ module itech32_inputs
 	// Discard mouse packets (the OSD owns the input).
 	input  logic        mouse_ignore,
 	input  logic [1:0]  trackball_speed,
+	// Light guns: the left sticks report absolute positions (MiSTer guns).
+	input  logic        lightgun_absolute,
 	input  logic        service_button,
 	input  logic        vblank,
 	input  logic        sound_special,
@@ -36,9 +38,14 @@ module itech32_inputs
 	output logic [31:0] input_p4,
 	output logic [31:0] input_dips,
 	output logic [31:0] input_extra,
-	// Trackball ports, (Y << 4) | X.
-	output logic [7:0]  trackball1,
-	output logic [7:0]  trackball2
+	// Trackball position counters, {Y, X}.
+	output logic [15:0] trackball1,
+	output logic [15:0] trackball2,
+	// Light-gun aim points in visible pixels, {Y[7:0], X[8:0]}.
+	output logic [16:0] lightgun1,
+	output logic [16:0] lightgun2,
+	// Player 2's gun has been aimed since reset (shows its crosshair).
+	output logic        lightgun2_active
 );
 	logic [11:0] joystick_0_q;
 	logic [11:0] joystick_1_q;
@@ -64,26 +71,49 @@ module itech32_inputs
 		end
 	end
 
-	// Trackball count release: 1600 Hz keeps a 3.8 ms read gap (MAME's 3.5 ms
-	// longest World Class Bowling gap, stretched to this core's frame rate)
-	// at six counts, inside the 4-bit counters' +-7 reach.
+	// Stick and d-pad integration tick, 1600 Hz on every board.
 	localparam int TICK_CYCLES = CLK_HZ / 1600;
 	localparam int TICK_W = $clog2(TICK_CYCLES);
 	localparam logic [31:0] TICK_LAST = TICK_CYCLES - 1;
+	// Count release, per board (TRACKBALL_RATE_*): 1600 Hz keeps a 3.8 ms read
+	// gap (MAME's 3.5 ms longest World Class Bowling gap, stretched to this
+	// core's frame rate) at six counts, inside a 4-bit counter's +-7 reach;
+	// 3600 Hz does the same for Golden Tee's 1.6 ms gaps, and 2200 Hz keeps
+	// Golden Tee 3D's 50 ms gaps inside its 8-bit counters' +-127.
+	localparam logic [31:0] RELEASE_1600_LAST = CLK_HZ / 1600 - 1;
+	localparam logic [31:0] RELEASE_3600_LAST = CLK_HZ / 3600 - 1;
+	localparam logic [31:0] RELEASE_2200_LAST = CLK_HZ / 2200 - 1;
 	logic [TICK_W-1:0] tick_count_q;
+	logic [TICK_W-1:0] release_count_q;
+	logic [TICK_W-1:0] release_last;
 	logic trackball_tick;
+	logic trackball_release;
 	logic mouse_toggle_q;
 	logic mouse_valid;
-	logic [3:0] tb1_x, tb1_y, tb2_x, tb2_y;
+	logic [7:0] tb1_x, tb1_y, tb2_x, tb2_y;
+
+	always_comb begin
+		case (profile.trackball_rate)
+			TRACKBALL_RATE_3600: release_last = RELEASE_3600_LAST[TICK_W-1:0];
+			TRACKBALL_RATE_2200: release_last = RELEASE_2200_LAST[TICK_W-1:0];
+			default:             release_last = RELEASE_1600_LAST[TICK_W-1:0];
+		endcase
+	end
 
 	always_ff @(posedge clk) begin
 		if (reset || trackball_tick)
 			tick_count_q <= '0;
 		else
 			tick_count_q <= tick_count_q + 1'b1;
+		if (reset || trackball_release)
+			release_count_q <= '0;
+		else
+			release_count_q <= release_count_q + 1'b1;
 		mouse_toggle_q <= ps2_mouse[24];
 	end
 	assign trackball_tick = tick_count_q == TICK_LAST[TICK_W-1:0];
+	// A count above the new limit (a profile change) runs on to the wrap.
+	assign trackball_release = release_count_q == release_last;
 	// The toggle is tracked even while ignored, so no stale packet replays.
 	assign mouse_valid = (ps2_mouse[24] != mouse_toggle_q) && !mouse_ignore && !reset;
 
@@ -93,7 +123,8 @@ module itech32_inputs
 	itech32_trackball trackball_p1 (
 		.clk(clk), .reset(reset),
 		.enable(profile.trackball != TRACKBALL_NONE),
-		.tick(trackball_tick), .speed(trackball_speed),
+		.tick(trackball_tick), .release_tick(trackball_release),
+		.speed(trackball_speed),
 		.mouse_valid(mouse_valid),
 		.mouse_dx({ps2_mouse[4], ps2_mouse[15:8]}),
 		.mouse_dy({ps2_mouse[5], ps2_mouse[23:16]}),
@@ -105,7 +136,8 @@ module itech32_inputs
 	itech32_trackball trackball_p2 (
 		.clk(clk), .reset(reset),
 		.enable(profile.trackball == TRACKBALL_TWO),
-		.tick(trackball_tick), .speed(trackball_speed),
+		.tick(trackball_tick), .release_tick(trackball_release),
+		.speed(trackball_speed),
 		.mouse_valid(1'b0), .mouse_dx(9'sd0), .mouse_dy(9'sd0),
 		.stick_x(analog_1[7:0]), .stick_y(analog_1[15:8]),
 		.dpad(joystick_1_q[3:0]),
@@ -114,6 +146,41 @@ module itech32_inputs
 
 	assign trackball1 = {tb1_y, tb1_x};
 	assign trackball2 = {tb2_y, tb2_x};
+
+	// Light guns: player 1 aims with the mouse, stick, d-pad or arrow keys,
+	// player 2 with the second controller. Held centred off light-gun boards.
+	logic [8:0] gun1_x, gun2_x;
+	logic [7:0] gun1_y, gun2_y;
+	itech32_lightgun lightgun_p1 (
+		.clk(clk), .reset(reset || !profile.lightgun), .tick(trackball_tick),
+		.absolute_stick(lightgun_absolute), .mouse_valid(mouse_valid),
+		.mouse_dx({ps2_mouse[4], ps2_mouse[15:8]}),
+		.mouse_dy({ps2_mouse[5], ps2_mouse[23:16]}),
+		.stick_x(analog_0[7:0]), .stick_y(analog_0[15:8]),
+		.dpad(joystick_0_q[3:0]), .x(gun1_x), .y(gun1_y)
+	);
+	itech32_lightgun lightgun_p2 (
+		.clk(clk), .reset(reset || !profile.lightgun), .tick(trackball_tick),
+		.absolute_stick(lightgun_absolute), .mouse_valid(1'b0),
+		.mouse_dx(9'sd0), .mouse_dy(9'sd0),
+		.stick_x(analog_1[7:0]), .stick_y(analog_1[15:8]),
+		.dpad(joystick_1_q[3:0]), .x(gun2_x), .y(gun2_y)
+	);
+	assign lightgun1 = {gun1_y, gun1_x};
+	assign lightgun2 = {gun2_y, gun2_x};
+
+	always_ff @(posedge clk) begin
+		if (reset || !profile.lightgun)
+			lightgun2_active <= 1'b0;
+		else if (joystick_1_q[3:0] != 4'd0 || analog_1 != 16'd0)
+			lightgun2_active <= 1'b1;
+	end
+
+	// Player 1's trigger also takes the mouse's left button (PS/2 flags bit
+	// 0, held between packets); the OSD owns it while open.
+	logic mouse_left_q;
+	always_ff @(posedge clk)
+		mouse_left_q <= !reset && !mouse_ignore && ps2_mouse[0];
 
 	// MiSTer joystick ordering follows the CONF_STR J field: directions in
 	// bits 0..3, then B1..B6 in 4..9, Start 10 and Coin 11.
@@ -201,16 +268,39 @@ module itech32_inputs
 						~joystick_1_q[7], ~joystick_0_q[7], ~joystick_1_q[5], ~joystick_0_q[5]};
 				end
 			endcase
-		end else if (profile.input_layout == INPUTS_SHUFFLE_BOWL) begin
-			// 68EC020 Shuffleshot/World Class Bowling: Zoom/Wax or Hook
-			// Left/Right on B1/B2, bits 4..7 unused (the d-pad drives the
-			// trackball); P3 holds only an unmapped third coin. DIPS and P4
-			// follow the SFTM board.
+		end else if (profile.input_layout == INPUTS_SHOOTTV) begin
+			// MAME shoottv: itech32_base_16bit bytes in bits 23:16. P1/P2
+			// carry only Coin and Start; P3 the two triggers (B1); 0x200000
+			// reads all ones; DIPS as the 16-bit boards with SW1:2 unused.
+			input_p1[23:16] = {6'b111111, ~joystick_0_q[10], ~joystick_0_q[11]};
+			input_p2[23:16] = {6'b111111, ~joystick_1_q[10], ~joystick_1_q[11]};
+			input_p3[23:16] = {6'b111111, ~joystick_1_q[4],
+				~(joystick_0_q[4] || mouse_left_q)};
+			input_p4 = 32'hffff_ffff;
+			input_dips[23:16] = {dip_switches[3], 1'b0, dip_switches[1:0], sound_special,
+				~vblank, 1'b1, ~service_button};
+		end else if (profile.input_layout == INPUTS_SHUFFLE_BOWL ||
+			profile.input_layout == INPUTS_GOLDEN_TEE ||
+			profile.input_layout == INPUTS_PUBBALL) begin
+			// 68EC020 trackball boards: Zoom/Wax, Hook Left/Right, Face
+			// Left/Right or First/Second Base on B1/B2, bits 4..7 unused (the
+			// d-pad drives the trackball). P3 holds an unmapped third coin;
+			// Golden Tee has Volume Up/Down (player 1's B3/B4) in bits 0/1,
+			// and Power Up Baseball both players' B3..B5 in bits 0..5 as SFTM,
+			// with its unused bits 6/7 low. DIPS and P4 follow the SFTM board.
 			input_p1[23:16] = player_16bit({joystick_0_q[11:4], 4'd0},
 				joystick_0_q[5], joystick_0_q[11]);
 			input_p2[23:16] = player_16bit({joystick_1_q[11:4], 4'd0},
 				joystick_1_q[5], joystick_1_q[11]);
-			input_p3[23:16] = 8'hff;
+			case (profile.input_layout)
+				INPUTS_GOLDEN_TEE:
+					input_p3[23:16] = {6'b111111, ~joystick_0_q[7], ~joystick_0_q[6]};
+				INPUTS_PUBBALL:
+					input_p3[23:16] = {2'b00, ~joystick_1_q[8], ~joystick_0_q[8],
+						~joystick_1_q[7], ~joystick_0_q[7], ~joystick_1_q[6], ~joystick_0_q[6]};
+				default:
+					input_p3[23:16] = 8'hff;
+			endcase
 			input_p4[23:16] = 8'hff;
 			input_dips[23:16] = {dip_switches[3:0], ~sound_special,
 				~vblank, 1'b1, ~service_button};

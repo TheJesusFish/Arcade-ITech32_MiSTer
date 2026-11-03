@@ -30,15 +30,23 @@ module itech32_board
 	input  logic [31:0] input_p4,
 	input  logic [31:0] input_dips,
 	input  logic [31:0] input_extra,
-	input  logic [7:0]  trackball1,
-	input  logic [7:0]  trackball2,
+	input  logic [15:0] trackball1,
+	input  logic [15:0] trackball2,
+	// Light-gun aim points in visible pixels, {Y[7:0], X[8:0]}.
+	input  logic [16:0] lightgun1,
+	input  logic [16:0] lightgun2,
 	input  logic        nvram_host_access,
 	input  logic        nvram_host_write,
-	input  logic [16:0] nvram_host_addr,
+	input  logic [17:0] nvram_host_addr,
 	input  logic [15:0] nvram_host_wdata,
 	output logic [15:0] nvram_host_rdata,
 	output logic        nvram_host_ready,
 	output logic        nvram_cpu_write,
+	// M48T02 clock bytes (offsets 0x7f8-0x7ff, byte i at [8i+7:8i]) and the
+	// CPU's writes to them.
+	input  logic [63:0] timekeeper_clock,
+	output logic [7:0]  timekeeper_write_enable,
+	output logic [63:0] timekeeper_write_data,
 
 	// Reserved for sound/board sources owned by another integration block.
 	// The encoded active-high level is priority-combined with video IRQs.
@@ -175,6 +183,9 @@ module itech32_board
 
 	logic       previous_vblank;
 	logic [2:0] video_irq_level;
+	logic [2:0] gun_irq_level;
+	logic       gun_ack5;
+	logic       gun_ack6;
 
 	// Video registers live in the blitter block but feed several physically
 	// distant timing/scanout comparators.  Snapshot the live programming once
@@ -226,9 +237,17 @@ module itech32_board
 	assign video_irq_level = irq_scanline ? 3'd3 :
 	                         irq_blitter  ? 3'd2 :
 	                         irq_vblank  ? 3'd1 : 3'd0;
+	// Must Shoot TV's gun interrupts (levels 5 and 6) outrank the video ones.
+	itech32_gun_irq gun_irq (
+		.clk(clk), .reset(reset || !video_configured), .enable(profile.lightgun),
+		.line_start(video_configured && ce_pixel && hpos == 10'd0), .vpos(vpos),
+		.ack5(gun_ack5), .ack6(gun_ack6), .irq_level(gun_irq_level)
+	);
 	always_comb begin
-		if (auxiliary_irq_level > video_irq_level)
+		if (auxiliary_irq_level > video_irq_level && auxiliary_irq_level > gun_irq_level)
 			cpu_irq_level = auxiliary_irq_level;
+		else if (gun_irq_level > video_irq_level)
+			cpu_irq_level = gun_irq_level;
 		else
 			cpu_irq_level = video_irq_level;
 	end
@@ -243,7 +262,7 @@ module itech32_board
 			irq_vblank <= 1'b0;
 		end else begin
 			previous_vblank <= vblank;
-			if (vblank && !previous_vblank)
+			if (vblank && !previous_vblank && !profile.vint_disabled)
 				irq_vblank <= 1'b1;
 			if (vint_ack_strobe)
 				irq_vblank <= 1'b0;
@@ -315,6 +334,7 @@ module itech32_board
 		.input_p3(input_p3), .input_p4(input_p4), .input_dips(input_dips),
 		.input_extra(input_extra),
 		.trackball1(trackball1), .trackball2(trackball2),
+		.lightgun1(lightgun1), .lightgun2(lightgun2),
 		.nvram_host_access(nvram_host_access),
 		.nvram_host_write(nvram_host_write),
 		.nvram_host_addr(nvram_host_addr),
@@ -322,6 +342,9 @@ module itech32_board
 		.nvram_host_rdata(nvram_host_rdata),
 		.nvram_host_ready(nvram_host_ready),
 		.nvram_cpu_write(nvram_cpu_write),
+		.timekeeper_clock(timekeeper_clock),
+		.timekeeper_write_enable(timekeeper_write_enable),
+		.timekeeper_write_data(timekeeper_write_data),
 		.video_req(video_req), .video_we(video_we), .video_addr(video_addr),
 		.video_wdata(video_wdata), .video_be(video_be),
 		.video_ack(video_ack), .video_rdata(video_rdata),
@@ -329,6 +352,7 @@ module itech32_board
 		.rom_ack(program_rom_ack), .rom_rdata(program_rom_rdata),
 		.sound_command_valid(sound_command_valid), .sound_command(sound_command),
 		.watchdog_strobe(watchdog_strobe), .vint_ack_strobe(vint_ack_strobe),
+		.gun_ack5(gun_ack5), .gun_ack6(gun_ack6),
 		.special_read_strobe(special_read_strobe),
 		.color0_strobe(color0_strobe), .color1_strobe(color1_strobe),
 		.color_data(color_data), .plane_enable(plane_enable), .grom_bank(grom_bank),

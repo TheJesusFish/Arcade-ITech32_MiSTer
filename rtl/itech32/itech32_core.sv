@@ -41,6 +41,11 @@ module itech32_core
 	input  logic [24:0] ps2_mouse,
 	input  logic        mouse_ignore,
 	input  logic [1:0]  trackball_speed,
+	// Light guns: absolute left sticks (MiSTer guns); crosshairs shown.
+	input  logic        lightgun_absolute,
+	input  logic        crosshair,
+	// hps_io RTC (MSM6242B layout, [64] toggles per update).
+	input  logic [64:0] rtc,
 
 	output logic        DDRAM_CLK,
 	input  logic        DDRAM_BUSY,
@@ -87,7 +92,7 @@ module itech32_core
 		ioctl_addr == 27'd0;
 	logic nvram_host_access;
 	logic nvram_host_write;
-	logic [16:0] nvram_host_addr;
+	logic [17:0] nvram_host_addr;
 	logic [15:0] nvram_host_wdata;
 	logic [15:0] nvram_host_rdata;
 	logic nvram_host_ready;
@@ -105,8 +110,15 @@ module itech32_core
 	logic [31:0] input_p4;
 	logic [31:0] input_dips;
 	logic [31:0] input_extra;
-	logic [7:0]  trackball1;
-	logic [7:0]  trackball2;
+	logic [15:0] trackball1;
+	logic [15:0] trackball2;
+	logic [16:0] lightgun1;
+	logic [16:0] lightgun2;
+	logic        lightgun2_active;
+	logic [23:0] board_rgb;
+	logic [7:0]  timekeeper_write_enable;
+	logic [63:0] timekeeper_write_data;
+	logic [63:0] timekeeper_clock;
 
 	logic vector_load_we;
 	logic [4:0] vector_load_addr;
@@ -224,6 +236,15 @@ module itech32_core
 	);
 	assign ioctl_wait = ddr_ioctl_wait | nvram_ioctl_wait;
 
+	// The tournament boards' M48T02 clock registers. Like the chip's own
+	// battery, the clock keeps time through board resets; each game load
+	// restarts it from the MiSTer RTC.
+	itech32_timekeeper #(.CLK_HZ(47_727_273)) timekeeper (
+		.clk(clk), .reset(memory_reset), .new_game(game_selector_write), .rtc(rtc),
+		.write_enable(timekeeper_write_enable), .write_data(timekeeper_write_data),
+		.read_data(timekeeper_clock)
+	);
+
 	// Main_MiSTer sends the complete eight-byte DIP payload at index 254.
 	// With WIDE=1 only the first word (address zero) contains SFTM's SW1 bits.
 	always_ff @(posedge clk) begin
@@ -252,6 +273,7 @@ module itech32_core
 		.analog_0(analog_0), .analog_1(analog_1),
 		.ps2_mouse(ps2_mouse), .mouse_ignore(mouse_ignore),
 		.trackball_speed(trackball_speed),
+		.lightgun_absolute(lightgun_absolute),
 		.service_button(1'b0), .vblank(vblank),
 		// MAME toggles the phase before returning the side-effecting special
 		// read. Predict that value combinationally; the registered read strobe
@@ -260,7 +282,9 @@ module itech32_core
 		.dip_switches(dip_switches),
 		.input_p1(input_p1), .input_p2(input_p2), .input_p3(input_p3),
 		.input_p4(input_p4), .input_dips(input_dips), .input_extra(input_extra),
-		.trackball1(trackball1), .trackball2(trackball2)
+		.trackball1(trackball1), .trackball2(trackball2),
+		.lightgun1(lightgun1), .lightgun2(lightgun2),
+		.lightgun2_active(lightgun2_active)
 	);
 
 	itech32_board #(
@@ -275,6 +299,7 @@ module itech32_core
 		.input_p1(input_p1), .input_p2(input_p2), .input_p3(input_p3),
 		.input_p4(input_p4), .input_dips(input_dips), .input_extra(input_extra),
 		.trackball1(trackball1), .trackball2(trackball2),
+		.lightgun1(lightgun1), .lightgun2(lightgun2),
 		.nvram_host_access(nvram_host_access),
 		.nvram_host_write(nvram_host_write),
 		.nvram_host_addr(nvram_host_addr),
@@ -282,6 +307,9 @@ module itech32_core
 		.nvram_host_rdata(nvram_host_rdata),
 		.nvram_host_ready(nvram_host_ready),
 		.nvram_cpu_write(nvram_cpu_write),
+		.timekeeper_clock(timekeeper_clock),
+		.timekeeper_write_enable(timekeeper_write_enable),
+		.timekeeper_write_data(timekeeper_write_data),
 		.auxiliary_irq_level(3'd0),
 		.sound_command_valid(sound_command_valid), .sound_command(sound_command),
 		.special_read_strobe(special_read_strobe),
@@ -305,7 +333,7 @@ module itech32_core
 		.scanline_data_valid(scanline_data_valid),
 		.scanline_rdata(scanline_rdata), .scanline_last(scanline_last),
 		.hpos(hpos), .vpos(vpos), .hblank(hblank), .vblank(vblank),
-		.hsync(hsync), .vsync(vsync), .rgb(rgb),
+		.hsync(hsync), .vsync(vsync), .rgb(board_rgb),
 		.pixel_data(), .pixel_index(), .pixel_valid(board_pixel_valid),
 		.scanout_underflow(board_scanout_underflow),
 		.video_configured(board_video_configured),
@@ -314,6 +342,18 @@ module itech32_core
 		.irq_scanline(board_irq_scanline),
 		.video_interrupt_state(), .cpu_irq_level(),
 		.debug_cpu_addr(debug_cpu_addr), .debug_cpu_busstate(debug_cpu_busstate)
+	);
+
+	// Light-gun crosshairs over the board's RGB (Must Shoot TV only).
+	// Player 2's appears once that gun has been aimed.
+	itech32_crosshair crosshairs (
+		.clk(clk), .ce_pixel(ce_pixel_board), .hblank(hblank), .vblank(vblank),
+		.rgb_in(board_rgb),
+		.enable({crosshair && profile.lightgun && lightgun2_active,
+			crosshair && profile.lightgun}),
+		.gun1_x(lightgun1[8:0]), .gun1_y(lightgun1[16:9]),
+		.gun2_x(lightgun2[8:0]), .gun2_y(lightgun2[16:9]),
+		.rgb_out(rgb)
 	);
 
 	itech32_sound_board sound_board (

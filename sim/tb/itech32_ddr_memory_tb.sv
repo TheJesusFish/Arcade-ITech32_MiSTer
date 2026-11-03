@@ -16,11 +16,14 @@ module itech32_ddr_memory_tb;
 	localparam logic [27:0] SOUND_BASE   = 28'h040_0000;
 	localparam logic [27:0] SAMPLE0_BASE = 28'h260_0000;
 	localparam logic [27:0] SAMPLE3_BASE = 28'h2a0_0000;
+	localparam logic [27:0] SAMPLEC_BASE = 28'h220_0000;
 	localparam logic [27:0] VRAM_BASE    = 28'h2e0_0000;
 
 	logic clk = 1'b0;
 	logic reset = 1'b1;
 	logic timekill_mode = 1'b0;
+	// Golden Tee 3D (short ROM board): three populated sample banks.
+	logic gt3d_mode = 1'b0;
 	logic quiesce = 1'b0;
 	logic quiesce_ack;
 	logic framework_reset = 1'b0;
@@ -153,7 +156,9 @@ module itech32_ddr_memory_tb;
 	end
 
 	itech32_ddr_memory #(.VRAM_CLEAR_LINES(8)) dut (
-		.clk(clk), .reset(reset), .profile(itech32_profile_tb_pkg::mode_profile(timekill_mode, 1'b0)),
+		.clk(clk), .reset(reset), .profile(gt3d_mode ?
+			itech32_profile_pkg::profile_for_selector(itech32_profile_pkg::SELECT_GT3D_SHORT) :
+			itech32_profile_tb_pkg::mode_profile(timekill_mode, 1'b0)),
 		.quiesce(quiesce), .quiesce_ack(quiesce_ack),
 		.ioctl_download(ioctl_download), .ioctl_wr(ioctl_wr),
 		.ioctl_index(ioctl_index), .ioctl_addr(ioctl_addr),
@@ -1310,6 +1315,25 @@ module itech32_ddr_memory_tb;
 			end
 		end
 		timekill_mode = 1'b0;
+
+		// Golden Tee 3D's three-tier boards: bank 0 in slot A, bank 2 in slot B,
+		// bank 3 in slot C (the last 4 MiB of the GROM window, whose model
+		// bytes are the GROM pattern); bank 1 is open. Fresh addresses keep the
+		// earlier profiles' cached sample lines out of the comparison.
+		gt3d_mode = 1'b1;
+		sample_read(2'd0, 22'h105020,
+			{model_byte(SAMPLE0_BASE + 28'h105020), model_byte(SAMPLE0_BASE + 28'h105021)});
+		sample_read(2'd2, 22'h106040,
+			{model_byte(SAMPLE3_BASE + 28'h106040), model_byte(SAMPLE3_BASE + 28'h106041)});
+		sample_read(2'd3, 22'h107060,
+			{model_byte(SAMPLEC_BASE + 28'h107060), model_byte(SAMPLEC_BASE + 28'h107061)});
+		sample_read(2'd3, 22'h37fffe,
+			{model_byte(SAMPLEC_BASE + 28'h37fffe), model_byte(SAMPLEC_BASE + 28'h37ffff)});
+		transaction_snapshot = ddr_transactions;
+		sample_read(2'd1, 22'h108000, 16'd0);
+		assert (ddr_transactions == transaction_snapshot)
+			else $fatal(1, "Golden Tee 3D empty sample bank 1 used DDR");
+		gt3d_mode = 1'b0;
 
 		vram_write(20'd5, 16'habcd, 2'b11);
 		vram_read(20'd5, 16'habcd);

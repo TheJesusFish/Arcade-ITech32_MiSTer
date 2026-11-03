@@ -22,6 +22,15 @@ to match the release descriptors.
 | World Class Bowling | `wcbowl15`, `wcbowl14`, `wcbowl13`, `wcbowl12`, `wcbowl11`, `wcbowl10` | `05` | 68000 board (MAME `bloodstm` machine); not yet hardware-tested |
 | World Class Bowling | `wcbowl13j` | `06` | 68000 board with the second trackball port; not yet hardware-tested |
 | Shuffleshot | `shufshot139`, `shufshot138`, `shufshot137`, `shufshot135` | `09` | Same board as `shufshot`; not yet hardware-tested |
+| Golden Tee 3D Golf | `gt3dl192`, `gt3dl191`, `gt3dl19` | `0f` | Three-tier long ROM board (MAME `init_gt3dl`); not yet hardware-tested |
+| Golden Tee 3D Golf | `gt3ds192`, `gt3dv18`, `gt3dv17`, `gt3dv16`, `gt3dv15`, `gt3dv14` | `0e` | Three-tier short ROM board, one 8-bit trackball (MAME `init_gt3d`); not yet hardware-tested |
+| Golden Tee '97 | `gt97v122`, `gt97v121`, `gt97v120` | `0a` | Same single board as `gt97`; not yet hardware-tested |
+| Golden Tee '98 | `gt98v100`, `gt98c100` | `0a` | Same single board as `gt98`; not yet hardware-tested |
+| Golden Tee 2K | `gt2kp100` | `0b` | Single board with MAME's alternate protection result; not yet hardware-tested |
+| Golden Tee Classic | `gtclasscp` | `0c` | Single board with MAME's alternate protection result; not yet hardware-tested |
+| Golden Tee '97, '98, '99, 2K, Classic | `gt97s121`, `gt98s100`, `gt99s100`, `gt2ks100`, `gtclasscs` | `0d` | One-trackball "S" board (MAME `init_s_ver`); not yet hardware-tested |
+| Golden Tee 3D Golf, '97, '98, '99, 2K Tournament | `gt3dt231`, `gt3dt230`, `gt3dt211`, `gt97t243`, `gt97t240`, `gt98t303`, `gt98t302`, `gtdiamond`, `gt99t400`, `gtroyal`, `gt2kt500`, `gtsupreme` | `11` | Single board plus the M48T02 timekeeper (MAME `init_aamat`); `gt97t243` hardware-tested |
+| World Class Bowling Tournament | `wcbowl140`, `wcbowl130` | `12` | Deluxe board plus the M48T02 timekeeper (MAME `init_wcbowlt`); `wcbowl140` hardware-tested |
 
 The Time Killers descriptors account for both monolithic and discrete GROM
 board layouts. BloodStorm revisions 2.10, 1.10, and 1.04 select the older sound
@@ -46,12 +55,28 @@ the second trackball port and its Controls switch. MAME's parent `wcbowl`
 and the original sample ROMs (a half-size `srom3`). Shuffleshot v1.37 and v1.35
 select the earlier GROM3 set. The earlier 68EC020 revisions (bowling v1.65-1.6,
 Shuffleshot v1.38-1.37) carry MAME's Flip Screen and Freeze Screen switches in
-place of Cabinet. World Class Bowling Deluxe has no clones. The tournament
-editions need the M48T02 timekeeper and are not yet supported.
+place of Cabinet. World Class Bowling Deluxe, Power Up Baseball and Must Shoot
+TV have no clones. The World Class Bowling tournament editions use the Deluxe board's
+protection address, GROM data and samples; their descriptors are built from the
+Deluxe release with the tournament programs, MAME's file names for the shared
+GROMs, and (v1.30) the earlier Flip/Freeze switches.
+
+The Golden Tee descriptors, releases included, are generated from one table
+emitted from MAME 0.288's ROM listing; the generator checks that the six
+release files still match it. Each set takes MAME's input-port group for its
+switches, so the DIP lists differ between versions as they do in MAME (for
+example, GT '97 v1.30 is the first with a Cabinet switch). The three-tier
+Golden Tee 3D boards fill three ES5506 sample banks; the third uses slot C,
+the last 4 MiB of the GROM window, which Golden Tee's 6 MiB GROM leaves free.
+The tournament editions are the single board with MAME's M48T02 timekeeper
+(`init_aamat`) and 4 MiB programs. GT 3D v2.11 packs its 6 MiB GROM as one
+4 MiB and one 2 MiB group; GT Diamond and GT Supreme carry their own third
+GROM group. Tournament descriptors save 133120 bytes of NVRAM: the 128 KiB
+store, then the timekeeper's 2 KiB (`docs/NVRAM.md`).
 
 ## Reproduction and integrity
 
-Run `scripts/generate_alternative_mras.py` to recreate all 34 generated descriptors from
+Run `scripts/generate_alternative_mras.py` to recreate all 69 generated descriptors from
 the reviewed parent MRAs. Every index-0 ROM stream is exactly `0x2e00000` bytes
 and carries a pinned MD5. `scripts/verify_mra_roms.py` independently reproduces
 Main_MiSTer's checksum order, including merged archives, offsets, lengths,
@@ -81,10 +106,13 @@ ROM-derived fixture, checksum result, or capture is stored in this repository.
   BloodStorm alternatives remain source/checksum-qualified; they were not each
   replayed through a full gameplay and NVRAM test on that exact RBF.
 - The Hard Yardage, Pairs-family, World Class Bowling, World Class Bowling
-  Deluxe, and Shuffleshot descriptors (seven parents, eighteen alternatives)
-  reproduce their pinned MD5s from merged archives. Each assembled
-  stream was also compared byte-for-byte with the regions that MAME 0.288's
-  `ROM_START` definitions load, at the core's DDR offsets; the BloodStorm parent
-  passed the same comparison as a control. They have not yet been run on MiSTer.
+  Deluxe, Shuffleshot, Golden Tee, Power Up Baseball, and Must Shoot TV
+  descriptors (fifteen parents, fifty-three alternatives) reproduce their
+  pinned MD5s from merged
+  archives. Each assembled stream was also compared byte-for-byte with the
+  regions that MAME 0.288's `ROM_START` definitions load, at the core's DDR
+  offsets; the BloodStorm parent passed the same comparison as a control.
+  Apart from the Golden Tee, Power Up Baseball, tournament, and Must Shoot TV
+  runs recorded in `docs/STATUS.md`, they have not yet been run on MiSTer.
 - Clone testing used the normal MiSTer scaler path. It does not add a separate
   Direct Video qualification claim beyond the already qualified shared RBF.

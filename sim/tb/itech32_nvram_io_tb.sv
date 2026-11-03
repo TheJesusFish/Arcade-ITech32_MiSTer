@@ -15,7 +15,7 @@ module itech32_nvram_io_tb;
 	logic memory_ready = 1'b1;
 	logic memory_access;
 	logic memory_write;
-	logic [16:0] memory_addr;
+	logic [17:0] memory_addr;
 	logic [15:0] memory_din;
 	logic [15:0] ioctl_din;
 	logic ioctl_wait;
@@ -70,7 +70,7 @@ module itech32_nvram_io_tb;
 		ioctl_download = 1'b1;
 		ioctl_wr = 1'b1;
 		#1;
-		assert (memory_access && memory_write && memory_addr == 17'h00124 && memory_din == 16'hc35a)
+		assert (memory_access && memory_write && memory_addr == 18'h00124 && memory_din == 16'hc35a)
 			else $fatal(1, "NVRAM_DOWNLOAD_FORWARDING");
 		@(negedge clk);
 		ioctl_download = 1'b0;

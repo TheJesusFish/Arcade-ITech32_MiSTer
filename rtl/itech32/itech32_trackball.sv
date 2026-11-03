@@ -1,16 +1,18 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // One trackball for the ITech32 ROM-board trackball port.
 //
-// Board side: two 4-bit up/down position counters, the only bits the game
-// reads (MAME trackball_r: (Y << 4) | X). Player side: a MiSTer mouse, an
-// analog stick or the d-pad stands in for the ball. Their movement collects
-// in a saturating per-axis accumulator in 1/16-count units and is released
-// as single counts, at most one per tick.
+// Board side: two 8-bit up/down position counters. Most boards read only the
+// low four bits (MAME trackball_r: (Y << 4) | X); Golden Tee 3D's short ROM
+// board reads all eight. Player side: a MiSTer mouse, an analog stick or the
+// d-pad stands in for the ball. Their movement collects in a saturating
+// per-axis accumulator in 1/16-count units and is released as single counts,
+// at most one per release strobe.
 //
-// The tick bounds the count rate like a real ball's encoder. In MAME 0.288,
-// World Class Bowling samples the port in eight read pairs per frame with a
-// longest gap of about 3.5 ms; the 4-bit counters alias past 7 counts per
-// sample, so the tick period must keep a gap below 8 counts.
+// The release strobe bounds the count rate like a real ball's encoder. A
+// 4-bit counter aliases past 7 counts between two reads by the game, so the
+// release period must keep the game's longest read gap below 8 counts (127
+// for 8-bit counters). The stick and d-pad integrate on the separate, fixed
+// tick, so their speed does not depend on the release rate.
 //
 // Orientation follows MAME's ports: X is reversed (moving right decreases
 // it) and Y decreases when the ball rolls forward, away from the player.
@@ -21,8 +23,10 @@ module itech32_trackball (
 	input  logic              reset,
 	// Low holds the counters and discards input (no trackball on this board).
 	input  logic              enable,
-	// Count-release strobe, one clock wide.
+	// Stick/d-pad integration strobe, one clock wide.
 	input  logic              tick,
+	// Count-release strobe, one clock wide.
+	input  logic              release_tick,
 	// Movement gain: 0..3 = 25%, 50%, 100%, 200% (MAME's default is 25%).
 	input  logic [1:0]        speed,
 	// One clock per MiSTer mouse packet. PS/2 deltas: +X right, +Y forward.
@@ -34,8 +38,8 @@ module itech32_trackball (
 	input  logic signed [7:0] stick_y,
 	// MiSTer d-pad {up, down, left, right}, used while the stick is centered.
 	input  logic [3:0]        dpad,
-	output logic [3:0]        count_x,
-	output logic [3:0]        count_y
+	output logic [7:0]        count_x,
+	output logic [7:0]        count_y
 );
 	// Pending movement in 1/16 counts. +-1023 holds 64 counts (about 40 ms at
 	// the fastest release), so a hard flick ends promptly once the ball stops.
@@ -125,11 +129,11 @@ module itech32_trackball (
 		rate_x = axis_rate(stick_x, dpad[0], dpad[1]);
 		rate_y = axis_rate(stick_y, dpad[2], dpad[3]);
 
-		// One count leaves per tick once a whole count is pending.
-		step_x_up   = tick && pending_x_q >= ONE_COUNT;
-		step_x_down = tick && pending_x_q <= -ONE_COUNT;
-		step_y_up   = tick && pending_y_q >= ONE_COUNT;
-		step_y_down = tick && pending_y_q <= -ONE_COUNT;
+		// One count leaves per release strobe once a whole count is pending.
+		step_x_up   = release_tick && pending_x_q >= ONE_COUNT;
+		step_x_down = release_tick && pending_x_q <= -ONE_COUNT;
+		step_y_up   = release_tick && pending_y_q >= ONE_COUNT;
+		step_y_down = release_tick && pending_y_q <= -ONE_COUNT;
 
 		sum_x = extend_pending(pending_x_q);
 		sum_y = extend_pending(pending_y_q);
@@ -163,13 +167,13 @@ module itech32_trackball (
 
 	always_ff @(posedge clk) begin
 		if (reset) begin
-			count_x <= 4'd0;
-			count_y <= 4'd0;
+			count_x <= 8'd0;
+			count_y <= 8'd0;
 		end else if (enable) begin
-			if (step_x_up)        count_x <= count_x + 4'd1;
-			else if (step_x_down) count_x <= count_x - 4'd1;
-			if (step_y_up)        count_y <= count_y + 4'd1;
-			else if (step_y_down) count_y <= count_y - 4'd1;
+			if (step_x_up)        count_x <= count_x + 8'd1;
+			else if (step_x_down) count_x <= count_x - 8'd1;
+			if (step_y_up)        count_y <= count_y + 8'd1;
+			else if (step_y_down) count_y <= count_y - 8'd1;
 		end
 	end
 

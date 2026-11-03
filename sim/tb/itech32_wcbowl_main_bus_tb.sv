@@ -23,8 +23,8 @@ module itech32_wcbowl_main_bus_tb;
     logic [3:0] cpu_be = 4'd0;
     logic cpu_ack;
     logic [31:0] cpu_rdata;
-    logic [7:0] trackball1 = 8'h00;
-    logic [7:0] trackball2 = 8'h00;
+    logic [15:0] trackball1 = 16'h0000;
+    logic [15:0] trackball2 = 16'h0000;
     logic video_req, rom_req, sound_command_valid, watchdog_strobe;
     logic vint_ack_strobe, special_read_strobe, color0_strobe, color1_strobe;
     integer checks = 0;
@@ -37,17 +37,17 @@ module itech32_wcbowl_main_bus_tb;
         .cpu_be(cpu_be), .cpu_ack(cpu_ack), .cpu_rdata(cpu_rdata),
         .input_p1(32'd0), .input_p2(32'd0), .input_p3(32'd0), .input_p4(32'd0),
         .input_dips(32'd0), .input_extra(32'd0),
-        .trackball1(trackball1), .trackball2(trackball2),
-        .nvram_host_access(1'b0), .nvram_host_write(1'b0), .nvram_host_addr(17'd0),
+        .trackball1(trackball1), .trackball2(trackball2), .lightgun1(17'd0), .lightgun2(17'd0),
+        .nvram_host_access(1'b0), .nvram_host_write(1'b0), .nvram_host_addr(18'd0),
         .nvram_host_wdata(16'd0), .nvram_host_rdata(), .nvram_host_ready(),
-        .nvram_cpu_write(),
+        .nvram_cpu_write(), .timekeeper_clock(64'd0), .timekeeper_write_enable(), .timekeeper_write_data(),
         .video_req(video_req), .video_we(), .video_addr(), .video_wdata(), .video_be(),
         .video_ack(1'b0), .video_rdata(16'd0),
         .rom_req(rom_req), .rom_addr(), .rom_ack(1'b0), .rom_rdata(32'd0),
         .sound_command_valid(sound_command_valid), .sound_command(),
         .watchdog_strobe(watchdog_strobe), .vint_ack_strobe(vint_ack_strobe),
         .special_read_strobe(special_read_strobe),
-        .color0_strobe(color0_strobe), .color1_strobe(color1_strobe), .color_data(),
+        .gun_ack5(), .gun_ack6(), .color0_strobe(color0_strobe), .color1_strobe(color1_strobe), .color_data(),
         .plane_enable(), .grom_bank(),
         .palette_video_addr(15'd0), .palette_video_rgb()
     );
@@ -117,14 +117,15 @@ module itech32_wcbowl_main_bus_tb;
         access("PIC_AFTER_WRITE", 24'h680080, 1'b0, 32'd0, 4'hc, 32'hbeef_0000, 32'hffff_0000, 3);
         access("RAM_UNCHANGED", 24'h00111c, 1'b0, 32'd0, 4'hf, 32'hbeef_1234, 32'hffff_ffff, 2);
 
-        // Trackball 1: (Y << 4) | X in the low byte of the 16-bit port.
-        trackball1 = 8'h3a;
+        // Trackball 1: (Y << 4) | X in the low byte of the 16-bit port, from
+        // the low nibbles of the 8-bit {Y, X} counters.
+        trackball1 = 16'hf3ea;
         access("TB1_WORD", 24'h680000, 1'b0, 32'd0, 4'hc, 32'h003a_0000, 32'hffff_0000, 2);
         access("TB1_BYTE", 24'h680001, 1'b0, 32'd0, 4'h4, 32'h003a_0000, 32'h00ff_0000, 2);
-        trackball1 = 8'hc5;
+        trackball1 = 16'h1c25;
         access("TB1_LIVE", 24'h680000, 1'b0, 32'd0, 4'hc, 32'h00c5_0000, 32'hffff_0000, 2);
         // v1.0-1.5 install no second trackball: 0x680040 stays open bus.
-        trackball2 = 8'h77;
+        trackball2 = 16'h8797;
         access("TB2_ABSENT", 24'h680040, 1'b0, 32'd0, 4'hc, 32'hffff_0000, 32'hffff_0000, 2);
         access("ZERO_578000", 24'h578000, 1'b0, 32'd0, 4'hc, 32'h0000_0000, 32'hffff_0000, 2);
         access("ZERO_57FFFE", 24'h57fffe, 1'b0, 32'd0, 4'h3, 32'h0000_0000, 32'h0000_ffff, 2);
@@ -147,7 +148,7 @@ module itech32_wcbowl_main_bus_tb;
         select(SELECT_WCBOWL_020);
         access("020_RAM_WRITE", 24'h001114, 1'b1, 32'h1122_3344, 4'hf, 32'd0, 32'd0, 2);
         access("020_PROTECTION", 24'h680002, 1'b0, 32'd0, 4'h2, 32'h0000_3300, 32'h0000_ff00, 3);
-        trackball1 = 8'h5a; trackball2 = 8'h77;
+        trackball1 = 16'h650a; trackball2 = 16'h8797;
         access("020_TB1", 24'h180800, 1'b0, 32'd0, 4'hf, 32'h005a_005a, 32'hffff_ffff, 2);
         access("020_TB1_HIGH", 24'h180802, 1'b0, 32'd0, 4'h3, 32'h005a_005a, 32'h0000_ffff, 2);
         access("020_TB2", 24'h181000, 1'b0, 32'd0, 4'hf, 32'h0077_0077, 32'hffff_ffff, 2);

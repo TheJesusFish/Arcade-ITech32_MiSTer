@@ -5,9 +5,17 @@ detached settings copy:
 
 | Board profile | CPU aperture | Saved bytes | Backing store |
 | --- | --- | ---: | --- |
-| Street Fighter: The Movie, World Class Bowling v1.6x/Deluxe, Shuffleshot | `0x600000-0x61ffff` | 131072 | dedicated 128 KiB NVRAM |
+| Street Fighter: The Movie, World Class Bowling v1.6x/Deluxe, Shuffleshot, Golden Tee, Power Up Baseball, Must Shoot TV | `0x600000-0x61ffff` | 131072 | dedicated 128 KiB NVRAM |
 | BloodStorm, Hard Yardage, Pairs family, World Class Bowling v1.0-1.5 | `0x000000-0x00ffff` | 65536 | complete work RAM |
 | Time Killers | `0x000000-0x003fff` | 16384 | low 16 KiB of work RAM |
+| Golden Tee and World Class Bowling tournament editions | `0x600000-0x61ffff`, then `0x681000-0x6817ff` | 133120 | dedicated 128 KiB NVRAM, then the M48T02 timekeeper's 2 KiB |
+
+The tournament boards' M48T02 maps one byte per CPU address (offset `n` at
+`0x681000 + n`). Its 2 KiB follows the 128 KiB store in the saved image, in
+offset order, so the file is MAME's `nvram32` and `m48t02` images
+concatenated. The last eight bytes are the clock registers; as in MAME, the
+saved copies are not restored into the running clock, which restarts from the
+MiSTer clock at each game load (`docs/DEVELOPMENT.md`).
 
 Each MRA declares `<nvram index="2" size="..."/>`. Main_MiSTer restores index 2
 through the ordinary download interface and saves it through the upload
@@ -67,6 +75,9 @@ two-byte validity field changes, and the following reload is clean.
   checks both the CPU's and the host's data. It fails on the previous design.
 - `nvram-memory` checks HPS-to-CPU and CPU-to-HPS round trips for SFTM,
   Time Killers, and BloodStorm, including size bounds and byte order.
+- `timekeeper-bus` checks the tournament image: the timekeeper bytes at host
+  offset `0x20000` in CPU byte order, restores reaching the CPU, and the
+  128 KiB store kept separate.
 - Production qualification confirmed that the RAMs remain inferred block RAM,
   all reported setup/hold corners pass, and save/reload works on MiSTer for
   SFTM v1.10, SFTM v1.11, BloodStorm v2.22, and Time Killers v1.32.

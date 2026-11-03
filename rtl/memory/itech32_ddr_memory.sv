@@ -23,6 +23,9 @@ module itech32_ddr_memory
 	parameter logic [27:0] GROM_BASE     = 28'h050_0000,
 	parameter logic [27:0] SAMPLE0_BASE  = 28'h260_0000,
 	parameter logic [27:0] SAMPLE3_BASE  = 28'h2a0_0000,
+	// Slot C shares the last 4 MiB of the GROM window, which profiles with at
+	// most 58 GROM pages leave unused (Golden Tee 3D's bank 3).
+	parameter logic [27:0] SAMPLEC_BASE  = 28'h220_0000,
 	parameter logic [27:0] VRAM_BASE     = 28'h2e0_0000,
 	parameter integer      VRAM_CLEAR_LINES = 262144,
 	parameter bit          VRAM_WRITE_COMBINE = 1'b1,
@@ -464,9 +467,14 @@ module itech32_ddr_memory
 			CLIENT_SAMPLE: begin
 				// Slot A is SAMPLE0_BASE and slot B the second populated 4 MiB
 				// slot, SAMPLE3_BASE (BloodStorm's bank 2, SFTM's bank 3).
-				capture_byte_addr = ((sample_slot(profile, sample_bank) ==
-					SAMPLE_SLOT_B) ? SAMPLE3_BASE : SAMPLE0_BASE)
-					+ {6'd0, sample_addr[21:1], 1'b0};
+				// Slot C is Golden Tee 3D's third bank.
+				case (sample_slot(profile, sample_bank))
+					SAMPLE_SLOT_B: capture_byte_addr = SAMPLE3_BASE;
+					SAMPLE_SLOT_C: capture_byte_addr = SAMPLEC_BASE;
+					default:       capture_byte_addr = SAMPLE0_BASE;
+				endcase
+				capture_byte_addr = capture_byte_addr +
+					{6'd0, sample_addr[21:1], 1'b0};
 				capture_sample_empty =
 					sample_slot(profile, sample_bank) == SAMPLE_EMPTY;
 				capture_signature = {15'd0, sample_bank, sample_addr};

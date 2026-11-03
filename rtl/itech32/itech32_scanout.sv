@@ -74,8 +74,10 @@ module itech32_scanout
 );
 
 	localparam integer FETCH_W = (ROW_WORDS <= 2) ? 1 : $clog2(ROW_WORDS);
-	// Time Killers' two 512-row planes, composited per pixel at scanout.
+	// Two planes (Time Killers, Golden Tee), composited per pixel at scanout.
+	// Time Killers' planes have 512 rows; every other plane has 1024.
 	wire two_planes = profile.vram_two_planes;
+	wire rows_512 = profile.vram_512_rows;
 	localparam logic [9:0] LINE_PIXELS_LIMIT = LINE_PIXELS[9:0];
 	logic        buffer0_valid, buffer1_valid;
 	logic [9:0]  buffer0_vtag, buffer1_vtag;
@@ -216,12 +218,12 @@ module itech32_scanout
 	assign fetch_aligned_x = two_planes && fetch_plane
 		? {1'b0, fetch_xorigin2[8:2], 2'b00}
 		: {1'b0, fetch_xorigin[8:2], 2'b00};
-	assign fetch_row = two_planes
+	assign fetch_row = rows_512
 		? (fetch_plane ? {1'b0, fetch_y2[8:0]} : {1'b0, fetch_y[8:0]})
 		: (fetch_plane ? fetch_y2 : fetch_y);
 	assign fetch_beat_x = fetch_aligned_x + (10'(fetch_index) << 2);
 	assign fetch_guard_beat =
-		fetch_row == (two_planes ? 10'h1ff : 10'h3ff) &&
+		fetch_row == (rows_512 ? 10'h1ff : 10'h3ff) &&
 		fetch_beat_x >= 10'd512;
 	assign fetch_write_data = fetch_guard_beat
 		? 64'hff00_ff00_ff00_ff00 : fb_rdata;

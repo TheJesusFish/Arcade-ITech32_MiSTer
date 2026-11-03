@@ -22,7 +22,7 @@ module itech32_nvram_upload_race_tb;
 	logic [31:0] cpu_rdata;
 	logic nvram_host_access = 1'b0;
 	logic nvram_host_write = 1'b0;
-	logic [16:0] nvram_host_addr = 17'd0;
+	logic [17:0] nvram_host_addr = 18'd0;
 	logic [15:0] nvram_host_wdata = 16'd0;
 	logic [15:0] nvram_host_rdata;
 	logic nvram_host_ready;
@@ -39,7 +39,7 @@ module itech32_nvram_upload_race_tb;
 		.cpu_rdata(cpu_rdata),
 		.input_p1(32'hffff_ffff), .input_p2(32'hffff_ffff),
 		.input_p3(32'hffff_ffff), .input_p4(32'hffff_ffff),
-		.input_dips(32'hffff_ffff), .input_extra(32'hffff_ffff), .trackball1(8'h00), .trackball2(8'h00),
+		.input_dips(32'hffff_ffff), .input_extra(32'hffff_ffff), .trackball1(16'h0000), .trackball2(16'h0000), .lightgun1(17'd0), .lightgun2(17'd0),
 		.nvram_host_access(nvram_host_access),
 		.nvram_host_write(nvram_host_write),
 		.nvram_host_addr(nvram_host_addr),
@@ -47,11 +47,12 @@ module itech32_nvram_upload_race_tb;
 		.nvram_host_rdata(nvram_host_rdata),
 		.nvram_host_ready(nvram_host_ready),
 		.nvram_cpu_write(nvram_cpu_write),
+		.timekeeper_clock(64'd0), .timekeeper_write_enable(), .timekeeper_write_data(),
 		.video_req(), .video_we(), .video_addr(), .video_wdata(), .video_be(),
 		.video_ack(1'b0), .video_rdata(16'd0),
 		.rom_req(), .rom_addr(), .rom_ack(1'b0), .rom_rdata(32'd0),
 		.sound_command_valid(), .sound_command(), .watchdog_strobe(),
-		.vint_ack_strobe(), .special_read_strobe(), .color0_strobe(),
+		.vint_ack_strobe(), .special_read_strobe(), .gun_ack5(), .gun_ack6(), .color0_strobe(),
 		.color1_strobe(), .color_data(), .plane_enable(), .grom_bank(),
 		.palette_video_addr(15'd0), .palette_video_rgb()
 	);
@@ -101,7 +102,7 @@ module itech32_nvram_upload_race_tb;
 	endtask
 
 	// One WIDE=1 host read once the transfer owns the RAM ports.
-	task automatic host_expect(input logic [16:0] address, input logic [15:0] expected);
+	task automatic host_expect(input logic [17:0] address, input logic [15:0] expected);
 		integer edges;
 		nvram_host_addr = address;
 		edges = 0;
@@ -121,7 +122,7 @@ module itech32_nvram_upload_race_tb;
 
 	task automatic end_upload;
 		nvram_host_access = 1'b0;
-		nvram_host_addr = 17'd0;
+		nvram_host_addr = 18'd0;
 		@(negedge clk);
 	endtask
 
@@ -150,12 +151,12 @@ module itech32_nvram_upload_race_tb;
 		for (integer lag = 0; lag <= 2; lag++) begin
 			@(negedge clk);
 			nvram_host_access = 1'b1;
-			nvram_host_addr = 17'd0;
+			nvram_host_addr = 18'd0;
 			repeat (lag) @(negedge clk);
 			issue_cpu(24'h001000, 1'b0, 32'd0);
 			ack_before = ack_count;
-			host_expect(17'h01000, 16'h3412);
-			host_expect(17'h01002, 16'h7856);
+			host_expect(18'h01000, 16'h3412);
+			host_expect(18'h01002, 16'h7856);
 			assert (ack_count == ack_before)
 				else $fatal(1, "NVRAM_RACE_READ_SERVED_DURING_UPLOAD lag=%0d", lag);
 			end_upload();
@@ -171,7 +172,7 @@ module itech32_nvram_upload_race_tb;
 		nvram_host_access = 1'b1;
 		wait_cpu_ack(r);
 		check("BS read accepted before upload", r, 32'h0bad_f00d);
-		host_expect(17'h01004, 16'had0b);
+		host_expect(18'h01004, 16'had0b);
 		end_upload();
 
 		// A write accepted one clock before the upload lands before the host
@@ -182,8 +183,8 @@ module itech32_nvram_upload_race_tb;
 		@(negedge clk);
 		nvram_host_access = 1'b1;
 		wait_cpu_ack(r);
-		host_expect(17'h01008, 16'hfeca);
-		host_expect(17'h0100a, 16'hbeba);
+		host_expect(18'h01008, 16'hfeca);
+		host_expect(18'h0100a, 16'hbeba);
 		end_upload();
 
 		// ---- SFTM: dedicated 128 KiB NVRAM at 0x600000 ----
@@ -199,10 +200,10 @@ module itech32_nvram_upload_race_tb;
 		@(posedge clk); #1;
 		@(negedge clk);
 		nvram_host_access = 1'b1;
-		nvram_host_addr = 17'd0;
+		nvram_host_addr = 18'd0;
 		wait_cpu_ack(r);
-		host_expect(17'h00100, 16'hadde);
-		host_expect(17'h00000, 16'h1111);
+		host_expect(18'h00100, 16'hadde);
+		host_expect(18'h00000, 16'h1111);
 		end_upload();
 		cpu_access(24'h600100, 1'b0, 32'd0, r);
 		check("SFTM straddling write target", r, 32'hdead_beef);
@@ -222,11 +223,11 @@ module itech32_nvram_upload_race_tb;
 		// A write presented after the upload starts waits, then completes.
 		@(negedge clk);
 		nvram_host_access = 1'b1;
-		nvram_host_addr = 17'd0;
+		nvram_host_addr = 18'd0;
 		@(negedge clk);
 		issue_cpu(24'h600200, 1'b1, 32'h3333_4444);
 		ack_before = ack_count;
-		host_expect(17'h00000, 16'h1111);
+		host_expect(18'h00000, 16'h1111);
 		assert (ack_count == ack_before)
 			else $fatal(1, "NVRAM_RACE_WRITE_SERVED_DURING_UPLOAD");
 		end_upload();

@@ -5,7 +5,9 @@ for the MiSTer FPGA. It currently supports the 68000-based Time Killers and
 BloodStorm boards (BloodStorm's board also runs Hard Yardage, Pairs, Hot Memory,
 Pairs Redemption, and the early trackball versions of World Class Bowling) and the
 68EC020-based Street Fighter: The Movie board (which also runs the later World
-Class Bowling versions, World Class Bowling Deluxe, and Shuffleshot).
+Class Bowling versions, World Class Bowling Deluxe, Shuffleshot, Golden Tee 3D
+Golf through Golden Tee Classic, and the Power Up Baseball and Must Shoot TV
+prototypes).
 
 **This core is vibe coded based on MAME. Its built binaries and MRAs live in
 the [Slop Core Repo](https://github.com/TheJesusFish/Slop-Core).**
@@ -42,15 +44,43 @@ analog characteristics.
 | World Class Bowling | 1.66 | `wcbowl` |
 | World Class Bowling Deluxe | 2.00 | `wcbowldx` |
 | Shuffleshot | 1.40 | `shufshot` |
+| Golden Tee 3D Golf | 1.93N | `gt3d` |
+| Golden Tee '97 | 1.30 | `gt97` |
+| Golden Tee '98 | 1.10 | `gt98` |
+| Golden Tee '99 | 1.00 | `gt99` |
+| Golden Tee 2K | 1.00 | `gt2k` |
+| Golden Tee Classic | 1.00 | `gtclassc` |
+| Power Up Baseball | prototype | `pubball` |
+| Must Shoot TV | prototype | `shoottv` |
 
 Hard Yardage, the Pairs family, World Class Bowling, and Shuffleshot are new and
-not yet hardware-tested; see [`docs/STATUS.md`](docs/STATUS.md). Hard Yardage
-supports four players. The trackball games are played with a USB mouse or
-trackball, the left analog stick, or the d-pad; the OSD's Trackball Speed sets
-the gain.
+not yet hardware-tested; Golden Tee, Power Up Baseball, the tournament editions,
+and Must Shoot TV have had a first test on a MiSTer. See [`docs/STATUS.md`](docs/STATUS.md). Hard Yardage supports four
+players. The trackball games are played with a USB mouse or trackball, the left
+analog stick, the d-pad, or the keyboard's arrow keys; the OSD's Trackball Speed
+sets the gain. Golden Tee's Volume Up/Down cabinet buttons are player 1's B3/B4.
+
+The Golden Tee and World Class Bowling tournament editions run with their
+battery-backed M48T02 clock, which starts from the MiSTer's clock. As in MAME,
+their tournament network (the modem) is not emulated: a first run reports
+tournament storage and hardware errors, and the game may check for the modem
+for about 50 seconds before attract mode. Open the OSD once to save the battery
+data; later runs report only the disabled tournament hardware.
+
+Must Shoot TV is a two-gun shooter. Player 1 aims with a USB mouse (left button
+fires), the left stick, the d-pad, or the arrow keys, and fires with B1 (Left
+Ctrl); player 2 uses the second controller. Crosshairs show where each gun
+points (OSD: Crosshair); player 2's appears once that gun moves. For MiSTer light
+guns that report through the analog stick, set the OSD's Light Gun Stick to
+Absolute.
+
+A keyboard works as controllers 1 and 2 with MAME's default keys. Player 1:
+arrow keys, Left Ctrl, Left Alt, Space, Left Shift, Z and X for B1-B6, 1 for
+Start and 5 for Coin. Player 2: R, F, D and G for up, down, left and right; A,
+S, Q and W for B1-B4; 2 for Start and 6 for Coin.
 
 The games share one `Arcade-ITech32.rbf`. Their MRA descriptors are in
-[`releases/`](releases/). Thirty-five supported earlier and regional revisions are
+[`releases/`](releases/). Seventy supported earlier, regional, and tournament revisions are
 provided in [`releases/alternatives/`](releases/alternatives/); the exact support
 boundary and validation status are recorded in
 [`docs/CLONE_SUPPORT.md`](docs/CLONE_SUPPORT.md). Game ROMs are not included.

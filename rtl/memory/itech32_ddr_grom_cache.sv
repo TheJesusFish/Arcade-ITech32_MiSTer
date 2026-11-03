@@ -21,7 +21,8 @@ module itech32_ddr_grom_cache (
 	input  logic        cancel,
 	// ROM download boundary: forget the resident line.
 	input  logic        invalidate,
-	// Blitter source bytes wrap modulo this many 512 KiB pages (16..127).
+	// Blitter source bytes wrap modulo this many 512 KiB pages (16..127, or
+	// 4..127 for profiles whose addresses stay below 16 MiB).
 	input  logic [6:0]  grom_pages,
 
 	input  logic        grom_req,
@@ -69,7 +70,10 @@ module itech32_ddr_grom_cache (
 	// SFTM). Reduce only the 7-bit page, leaving the 19 byte-offset wires
 	// untouched. A 7-bit page is below 8 x pages for pages >= 16, so three
 	// narrow conditional subtracts (4N, 2N, N) are an exact modulo without a
-	// divider or a new pipeline stage. Smaller GROMs need a longer chain.
+	// divider or a new pipeline stage. GROMs under 16 MiB have no bank bits
+	// (MAME's grom_bank_mask; profile grom_banked), so their addresses keep
+	// the page below 32 and the same chain is exact down to 4 pages (Golden
+	// Tee's 12).
 	function automatic logic [25:0] grom_wrap(input logic [25:0] address,
 		input logic [6:0] pages);
 		logic [8:0] page;

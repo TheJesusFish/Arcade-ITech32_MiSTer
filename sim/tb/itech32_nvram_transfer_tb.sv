@@ -26,7 +26,7 @@ module itech32_nvram_transfer_tb;
 	wire ioctl_wait;
 	wire memory_access;
 	wire memory_write;
-	wire [16:0] memory_addr;
+	wire [17:0] memory_addr;
 	wire [15:0] memory_din;
 	wire [15:0] memory_dout;
 	wire runtime_hold;
@@ -73,16 +73,17 @@ module itech32_nvram_transfer_tb;
 		.cpu_req(1'b0), .cpu_we(1'b0), .cpu_addr(24'd0),
 		.cpu_wdata(32'd0), .cpu_be(4'd0), .cpu_ack(), .cpu_rdata(),
 		.input_p1(32'd0), .input_p2(32'd0), .input_p3(32'd0),
-		.input_p4(32'd0), .input_dips(32'd0), .input_extra(32'd0), .trackball1(8'h00), .trackball2(8'h00),
+		.input_p4(32'd0), .input_dips(32'd0), .input_extra(32'd0), .trackball1(16'h0000), .trackball2(16'h0000), .lightgun1(17'd0), .lightgun2(17'd0),
 		.nvram_host_access(memory_access), .nvram_host_write(memory_write),
 		.nvram_host_addr(memory_addr), .nvram_host_wdata(memory_din),
 		.nvram_host_rdata(memory_dout), .nvram_host_ready(nvram_host_ready),
 		.nvram_cpu_write(nvram_cpu_write),
+		.timekeeper_clock(64'd0), .timekeeper_write_enable(), .timekeeper_write_data(),
 		.video_req(), .video_we(), .video_addr(), .video_wdata(),
 		.video_be(), .video_ack(1'b0), .video_rdata(16'd0),
 		.rom_req(), .rom_addr(), .rom_ack(1'b0), .rom_rdata(32'd0),
 		.sound_command_valid(), .sound_command(), .watchdog_strobe(),
-		.vint_ack_strobe(), .special_read_strobe(), .color0_strobe(),
+		.vint_ack_strobe(), .special_read_strobe(), .gun_ack5(), .gun_ack6(), .color0_strobe(),
 		.color1_strobe(), .color_data(), .plane_enable(), .grom_bank(),
 		.palette_video_addr(15'd0), .palette_video_rgb()
 	);

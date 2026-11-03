@@ -73,15 +73,24 @@ explicit `*_PASS` assertion message and zero simulation errors.
 | `game-selector` | Decoded board profile for every selector plus unsupported-selector SFTM fallback |
 | `nvram-save-request`, `nvram-io`, `nvram-memory`, `nvram-transfer` | One save per dirty OSD-opening edge, MiSTer upload/dirty protocol and RAM-grant wait, all three backing stores, bounds and byte lanes, plus an exact WIDE=1 `hps_io` save/restore round trip |
 | `nvram-upload-race` | CPU reads/writes in flight when an upload starts: drained with the CPU's own address, new accesses held until the RAM is returned, host data correct |
-| `inputs`, `blood-inputs`, `family-inputs` | Input and DIP mapping, including four-player Hard Yardage, one-button Pairs, both World Class Bowling boards and Shuffleshot, and the trackball ports end to end |
-| `trackball` | Mouse/stick/d-pad trackball emulation: orientation, gain, one count per release tick, saturation, dead zone, plus a randomized reference-model comparison |
+| `inputs`, `blood-inputs`, `family-inputs` | Input and DIP mapping, including four-player Hard Yardage, one-button Pairs, both World Class Bowling boards, Shuffleshot, Golden Tee's volume buttons, Power Up Baseball's five buttons and Must Shoot TV's triggers and guns, and the trackball ports end to end with each board's count release rate |
+| `timekeeper` | M48T02 clock registers against MAME's `timekpr.cpp`: BCD rollover through every field (month lengths, leap February, century), masked high bits, ST stop, W hold and load, R freeze and refresh, RTC load per game and RTC following until the game sets its own time |
+| `timekeeper-bus` | Tournament boards on the main bus: the 2 KiB through every byte lane, clock bytes from the timekeeper block (loaded, written, ticking), dirty pulses, the saved image after the 128 KiB NVRAM, and the unmapped window on the non-tournament board |
+| `lightgun` | Aim point: centred at reset, one pixel per mouse count, clamped to 384x256, d-pad and stick speeds, dead zone, absolute sticks across the screen |
+| `gun-irq` | Must Shoot TV gun interrupts: level 5 at lines 0 mod 32, level 6 at 16 mod 32, held until each clear, level 6 over 5, nothing while disabled |
+| `crosshair` | Crosshairs on a synthetic 384x256 raster, every active pixel sampled at the mixer's CE_PIXEL edge against a reference: arms, clear centre, gun 1 over gun 2, disabled guns, unchanged RGB elsewhere |
+| `shoottv-bus` | Must Shoot TV's map: gun registers and X offset, interrupt clear windows, the fixed PIC dword, SFTM colour order, all-ones P4, and SFTM keeping the windows unmapped |
+| `keyboard` | MAME default keys as controllers 1 and 2: every key sets and clears only its own bit, one event per `ps2_key` toggle, unmapped and wrong-prefix codes ignored, OSD clear and reset |
+| `trackball` | Mouse/stick/d-pad trackball emulation: orientation, gain, one count per release strobe independent of the stick tick, saturation, dead zone, 8-bit counter wrap, plus a randomized reference-model comparison |
 | `cpu-adapter` | TG68 bus-adapter handshake |
 | `blitter`, `rle-prefetch` | Synthetic blits and RLE prefetch behavior |
 | `graphics-queue` | Production board/main bus/blitter/gather/FIFO/forward slice and DDR service/terminator together; delayed writes, full/wrapped FIFO, ordered completion/readback, partial qwords, both planes, repeated addresses, raw/RLE/copy commands, and board-reset cancellation |
 | `sftm-protection` | SFTM zero-read protection source, protected-byte lane, and unchanged Time Killers/BloodStorm open-bus policy |
 | `wcbowl-bus` | Trackball-board reads on both maps: trackball ports, security-PIC result word, itech020 protection bytes, zero window, and unchanged BloodStorm/SFTM responses |
+| `golden-tee-bus` | Golden Tee boards: the four trackball wirings, the `0x112f` protection byte and the fixed alternate-protection dwords, swapped colour latches, two planes at reset, GROM bank bits ignored below 16 MiB, and the word-wide sound command, with SFTM and Shuffleshot at the same addresses |
+| `scanout-planes` | Framebuffer scanout against MAME's `screen_update` for one 1024-row plane, two 512-row planes and two 1024-row planes: row-end crossing, plane wrap, guard rows and plane-1 compositing |
 | `blood-bus`, `blood-init` | BloodStorm bus decode and initial-RAM behavior |
-| `ddr` | Memory service, resident reads, reset, and write overlap |
+| `ddr` | Memory service, resident reads, sample slots A-C and empty banks, reset, and write overlap |
 | `audio-arbitration` | Audio qword service and cancellation/edge cases |
 | `sound-service` | Registered SOUND resident hits, held signatures, cancellation, and bounded SAMPLE-grant quota |
 | `es5506-host`, `es5506-audio`, `es5506-cadence` | Sound-device register and sample behavior |

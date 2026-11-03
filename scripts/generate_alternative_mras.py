@@ -594,11 +594,690 @@ def generate_shufshot() -> list[Path]:
     return written
 
 
+# Golden Tee (MAME sftm machine with init_gt_common). The six releases and
+# their alternatives are built from one description, generated from MAME
+# 0.288's ROM listing: each set names its board (the selector, trackball
+# wiring and ES5506 sample banks follow the GAME() line's init and the
+# ROM_START regions) and its MAME input-port group.
+GT_BOARDS = {
+    # board: (selector, trackballs, sample layout)
+    "aama": ("0a", 2, "single"),       # init_aama: AAMA serial numbers 676266 and up
+    "gt2kp": ("0b", 2, "single"),      # init_gt2kp
+    "gtclasscp": ("0c", 2, "single"),  # init_gtclasscp
+    "s": ("0d", 1, "bank2"),           # init_s_ver: P/N 1088 short ROM board
+    "3d_short": ("0e", 1, "three"),    # init_gt3d: P/N 1069 short ROM board
+    "3d_long": ("0f", 2, "three"),     # init_gt3dl: P/N 1080 long ROM board
+    "aama_t": ("11", 2, "single"),     # init_aamat: the single board plus the timekeeper
+}
+# Boards with MAME's M48T02 timekeeper: its 2 KiB follows the 128 KiB NVRAM
+# in the saved image.
+GT_TIMEKEEPER_BOARDS = {"aama_t"}
+NVRAM_TIMEKEEPER_BYTES = 131072 + 2048
+
+# Labels stay short enough for the OSD line to show the setting.
+GT_ORIENTATION = ("Trackball Mount", "Normal,45 Degrees")
+GT_CONTROLS = ("Controls", "One Trackball,Two Trackballs")
+GT_CABINET = ("Cabinet", "Upright,Cocktail")
+GT_FREEZE = ("Freeze Screen", "Off,On")
+# MAME input-port groups as (DIP bit, (name, settings)), bit 0 = SW1:4. MAME's
+# "Unknown" switches are left out.
+GT_DIPS = {
+    "gt3d": ((1, GT_ORIENTATION), (2, GT_CONTROLS)),
+    "gt97": ((0, GT_FREEZE), (2, GT_CABINET)),
+    "gt97o": ((0, GT_FREEZE), (1, GT_ORIENTATION), (2, GT_CONTROLS)),
+    "gt97s": ((0, GT_FREEZE), (1, GT_ORIENTATION)),
+    "gt98": ((1, GT_CONTROLS), (2, GT_CABINET)),
+    "gt98s": (),
+    "aama": ((0, GT_ORIENTATION), (1, GT_CABINET), (2, GT_CONTROLS)),
+    "s_ver": ((0, GT_ORIENTATION),),
+}
+
+GT3D_GROM_T = (
+    ('gtg3_grom0_0.grm0_0', '1b10379d'),
+    ('gtg3_grom0_1.grm0_1', '3b852e1a'),
+    ('gtg3_grom0_2.grm0_2', 'd43ffb35'),
+    ('gtg3_grom0_3.grm0_3', '2d24e93e'),
+    ('gtg3_grom1_0.grm1_0', '4476b239'),
+    ('gtg3_grom1_1.grm1_1', '0aadfad2'),
+    ('gtg3_grom1_2.grm1_2', '27871980'),
+    ('gtg3_grom1_3.grm1_3', '7dbc242b'),
+    ('gtg3_grom2_0_t.grm2_0', '80ae7148'),
+    ('gtg3_grom2_1_t.grm2_1', '0f85a618'),
+    ('gtg3_grom2_2_t.grm2_2', '09ca5fbf'),
+    ('gtg3_grom2_3_t.grm2_3', 'd136853a'),
+)
+GT3D_SAMPLES = (
+    ('gtg3_srom0_nr.srom0', '44983bd7'),
+    ('gtg3_srom1_nr.srom1', '1b3f18b6'),
+)
+GT3D_GROM = (
+    ('gtg3_grom0_0.grm0_0', '1b10379d'),
+    ('gtg3_grom0_1.grm0_1', '3b852e1a'),
+    ('gtg3_grom0_2.grm0_2', 'd43ffb35'),
+    ('gtg3_grom0_3.grm0_3', '2d24e93e'),
+    ('gtg3_grom1_0.grm1_0', '4476b239'),
+    ('gtg3_grom1_1.grm1_1', '0aadfad2'),
+    ('gtg3_grom1_2.grm1_2', '27871980'),
+    ('gtg3_grom1_3.grm1_3', '7dbc242b'),
+    ('gtg3_grom2_0.grm2_0', '15cb22bc'),
+    ('gtg3_grom2_1.grm2_1', '52f3ad44'),
+    ('gtg3_grom2_2.grm2_2', 'c7712125'),
+    ('gtg3_grom2_3.grm2_3', '77869bcf'),
+)
+GT3D_LONG_SAMPLES = (
+    ('ensoniq_2mx16u.rom0', '0814ab80'),
+    ('gtg3_srom1.srom1', 'ac669434'),
+    ('gtg3_srom2.srom2', '6853578e'),
+    ('gtg3_srom3.srom3', 'd2462965'),
+)
+GT3D_SHORT_SAMPLES = (
+    ('ensoniq_2m.rom0', '9fdc4825'),
+    ('gtg3_srom1.srom1', 'ac669434'),
+    ('gtg3_srom2.srom2', '6853578e'),
+    ('gtg3_srom3.srom3', 'd2462965'),
+)
+GT97_GROM = (
+    ('gt97_grom0_0.grm0_0', '81784aaf'),
+    ('gt97_grom0_1.grm0_1', '345bda44'),
+    ('gt97_grom0_2.grm0_2', 'b2beb40d'),
+    ('gt97_grom0_3.grm0_3', '7cef32ff'),
+    ('gt97_grom1_0.grm1_0', '1cc4c309'),
+    ('gt97_grom1_1.grm1_1', '512cea45'),
+    ('gt97_grom1_2.grm1_2', '0599b505'),
+    ('gt97_grom1_3.grm1_3', '257eacc9'),
+    ('gt97_grom2_0.grm2_0', '95b6e7ee'),
+    ('gt97_grom2_1.grm2_1', 'afd558b4'),
+    ('gt97_grom2_2.grm2_2', '5b7a8733'),
+    ('gt97_grom2_3.grm2_3', '72e8ae60'),
+)
+GT97_SAMPLES = (
+    ('gt97_srom0_nr.srom0', '44983bd7'),
+    ('gt97_srom1_nr.srom1', '1b3f18b6'),
+)
+GT_S_SAMPLES = (
+    ('gtg3_srom1_nr++.srom1', '44983bd7'),
+    ('gtg3_srom2_nr+.srom2', '1b3f18b6'),
+)
+GT98_GROM = (
+    ('gt98_grom0_0.grm0_0', '2d79492b'),
+    ('gt98_grom0_1.grm0_1', '79afda1a'),
+    ('gt98_grom0_2.grm0_2', '8c381f56'),
+    ('gt98_grom0_3.grm0_3', '46c35ba6'),
+    ('gt98_grom1_0.grm1_0', 'b07bc634'),
+    ('gt98_grom1_1.grm1_1', 'b23d59a7'),
+    ('gt98_grom1_2.grm1_2', '9c113abc'),
+    ('gt98_grom1_3.grm1_3', '231bbe58'),
+    ('gt98_grom2_0.grm2_0', 'db5cec87'),
+    ('gt98_grom2_1.grm2_1', 'c74fc7d3'),
+    ('gt98_grom2_2.grm2_2', '1227609d'),
+    ('gt98_grom2_3.grm2_3', '78745131'),
+)
+GT98_SAMPLES = (
+    ('gt98_srom0_nr.srom0', '44983bd7'),
+    ('gt98_srom1_nr.srom1', '1b3f18b6'),
+)
+GT99_GROM = (
+    ('gt99_grom0_0.grm0_0', 'c22b50f9'),
+    ('gt99_grom0_1.grm0_1', 'd6d6be57'),
+    ('gt99_grom0_2.grm0_2', '005d4791'),
+    ('gt99_grom0_3.grm0_3', '0c998eb7'),
+    ('gt99_grom1_0.grm1_0', '8b79d6e2'),
+    ('gt99_grom1_1.grm1_1', '84ef1803'),
+    ('gt99_grom1_2.grm1_2', 'd73d8afc'),
+    ('gt99_grom1_3.grm1_3', '59f48688'),
+    ('gt99_grom2_0.grm2_0', '693d9d68'),
+    ('gt99_grom2_1.grm2_1', '2c0b8b8c'),
+    ('gt99_grom2_2.grm2_2', 'ba1b5961'),
+    ('gt99_grom2_3.grm2_3', 'cfccd5c2'),
+)
+GT99_SAMPLES = (
+    ('gt99_srom0_nr.srom0', '44983bd7'),
+    ('gt99_srom1_nr.srom1', '1b3f18b6'),
+)
+GT2K_GROM = (
+    ('gt2k_grom0_0.grm0_0', 'c22b50f9'),
+    ('gt2k_grom0_1.grm0_1', 'd6d6be57'),
+    ('gt2k_grom0_2.grm0_2', '005d4791'),
+    ('gt2k_grom0_3.grm0_3', '0c998eb7'),
+    ('gt2k_grom1_0.grm1_0', '8b79d6e2'),
+    ('gt2k_grom1_1.grm1_1', '84ef1803'),
+    ('gt2k_grom1_2.grm1_2', 'd73d8afc'),
+    ('gt2k_grom1_3.grm1_3', '59f48688'),
+    ('gt2k_grom2_0.grm2_0', 'cc11b93f'),
+    ('gt2k_grom2_1.grm2_1', '1c3a0126'),
+    ('gt2k_grom2_2.grm2_2', '97814df5'),
+    ('gt2k_grom2_3.grm2_3', 'f0f7373f'),
+)
+GT2K_SAMPLES = (
+    ('gt2k_srom0_nr.srom0', '44983bd7'),
+    ('gt2k_srom1_nr.srom1', '1b3f18b6'),
+)
+GTCLASSIC_GROM = (
+    ('gt_classic_grom0_0.grm0_0', 'c22b50f9'),
+    ('gt_classic_grom0_1.grm0_1', 'd6d6be57'),
+    ('gt_classic_grom0_2.grm0_2', '005d4791'),
+    ('gt_classic_grom0_3.grm0_3', '0c998eb7'),
+    ('gt_classic_grom1_0.grm1_0', '8b79d6e2'),
+    ('gt_classic_grom1_1.grm1_1', '84ef1803'),
+    ('gt_classic_grom1_2.grm1_2', 'd73d8afc'),
+    ('gt_classic_grom1_3.grm1_3', '59f48688'),
+    ('gt_classic_grom2_0.grm2_0', 'c4f54398'),
+    ('gt_classic_grom2_1.grm2_1', '2c1f83cf'),
+    ('gt_classic_grom2_2.grm2_2', '607657a6'),
+    ('gt_classic_grom2_3.grm2_3', '7ad615c1'),
+)
+GTCLASSIC_SAMPLES = (
+    ('gt_classic_srom0.nr', '44983bd7'),
+    ('gt_classic_srom1.nr', '1b3f18b6'),
+)
+
+# setname, MAME parent, title, year, board, MAME input-port group, program,
+# sound program, GROM, sample ROMs, md5.
+GT_SETS = (
+    ('gt3d', None, 'Golden Tee 3D Golf (v1.93N)', '1995', 'aama', 'gt3d',
+     (
+         ('gtg3_prom0_v1.93n.prom0', 'cacacb44'),
+         ('gtg3_prom1_v1.93n.prom1', '4c172d7f'),
+         ('gtg3_prom2_v1.93n.prom2', 'b53fe6f0'),
+         ('gtg3_prom3_v1.93n.prom3', '78468761'),
+     ), ('gtg3nr_u88_v1.0.u88', '2cee9e98'), GT3D_GROM_T, GT3D_SAMPLES, "8fedd84972a26b1ec1792579802cc3ae"),
+    ('gt3dl192', 'gt3d', 'Golden Tee 3D Golf (v1.92L)', '1995', '3d_long', 'gt3d',
+     (
+         ('gtg3_prom0_v1.92l.prom0', 'b449b939'),
+         ('gtg3_prom1_v1.92l.prom1', 'ff986e67'),
+         ('gtg3_prom2_v1.92l.prom2', 'eb959447'),
+         ('gtg3_prom3_v1.92l.prom3', '0265b798'),
+     ), ('gtg3-snd_u23_v2.2.u23', '26fe2e92'), GT3D_GROM, GT3D_LONG_SAMPLES, "352207a32fc6aa5ec66ad2cfb152c3b3"),
+    ('gt3dl191', 'gt3d', 'Golden Tee 3D Golf (v1.91L)', '1995', '3d_long', 'gt3d',
+     (
+         ('gtg3_prom0_v1.91l.prom0', 'a3ea30d8'),
+         ('gtg3_prom1_v1.91l.prom1', '3aa87e56'),
+         ('gtg3_prom2_v1.91l.prom2', '41720e87'),
+         ('gtg3_prom3_v1.91l.prom3', '30946139'),
+     ), ('gtg3-snd_u23_v2.1.u23', '6ae2646d'), GT3D_GROM, GT3D_LONG_SAMPLES, "954f15b53a90481fd3993cd81ad20d9a"),
+    ('gt3dl19', 'gt3d', 'Golden Tee 3D Golf (v1.9L)', '1995', '3d_long', 'gt3d',
+     (
+         ('gtg3_prom0_v1.9l.prom0', 'b6293cf6'),
+         ('gtg3_prom1_v1.9l.prom1', '270b7936'),
+         ('gtg3_prom2_v1.9l.prom2', '3f892e81'),
+         ('gtg3_prom3_v1.9l.prom3', 'b63ef2c0'),
+     ), ('gtg3-snd_u23_v2.0.u23', '3f69a9ea'), GT3D_GROM, GT3D_LONG_SAMPLES, "83f62bccf18476ceba07c38d4fe548de"),
+    ('gt3ds192', 'gt3d', 'Golden Tee 3D Golf (v1.92S)', '1995', '3d_short', 'gt3d',
+     (
+         ('gtg3_prom0_v1.92s.prom0', 'eee38005'),
+         ('gtg3_prom1_v1.92s.prom1', '818ba70e'),
+         ('gtg3_prom2_v1.92s.prom2', '7ab661a1'),
+         ('gtg3_prom3_v1.92s.prom3', 'f9f96c01'),
+     ), ('gtg3-snd_u23_v1.2.u23', 'cbbe41f9'), GT3D_GROM, GT3D_SHORT_SAMPLES, "cd779617150aba729f00407a7c8bd21e"),
+    ('gt3dv18', 'gt3d', 'Golden Tee 3D Golf (v1.8)', '1995', '3d_short', 'gt3d',
+     (
+         ('gtg3_prom0_v1.8.prom0', '0fa53c40'),
+         ('gtg3_prom1_v1.8.prom1', 'bef2cbe3'),
+         ('gtg3_prom2_v1.8.prom2', '1d5fb128'),
+         ('gtg3_prom3_v1.8.prom3', '5542c335'),
+     ), ('gtg3-snd_u23_v1.1.u23', '2f4cde9f'), GT3D_GROM, GT3D_SHORT_SAMPLES, "f06f81a2630778ea6f89ca6c84c71a6b"),
+    ('gt3dv17', 'gt3d', 'Golden Tee 3D Golf (v1.7)', '1995', '3d_short', 'gt3d',
+     (
+         ('gtg3_prom0_v1.7.prom0', '9a6fc839'),
+         ('gtg3_prom1_v1.7.prom1', '26606578'),
+         ('gtg3_prom2_v1.7.prom2', '9c4d348b'),
+         ('gtg3_prom3_v1.7.prom3', '53b1d6e7'),
+     ), ('gtg3-snd_u23_v1.1.u23', '2f4cde9f'), GT3D_GROM, GT3D_SHORT_SAMPLES, "001c338b9a5bf6dfe45f9738cb8e6e87"),
+    ('gt3dv16', 'gt3d', 'Golden Tee 3D Golf (v1.6)', '1995', '3d_short', 'gt3d',
+     (
+         ('gtg3_prom0_v1.6.prom0', '99d9a7e7'),
+         ('gtg3_prom1_v1.6.prom1', '0ec4b307'),
+         ('gtg3_prom2_v1.6.prom2', '02ce6085'),
+         ('gtg3_prom3_v1.6.prom3', 'e77fa8a2'),
+     ), ('gtg3-snd_u23_v1.1.u23', '2f4cde9f'), GT3D_GROM, GT3D_SHORT_SAMPLES, "c680a70bf02988d088a9404ce3f6b66f"),
+    ('gt3dv15', 'gt3d', 'Golden Tee 3D Golf (v1.5)', '1995', '3d_short', 'gt3d',
+     (
+         ('gtg3_prom0_v1.5.prom0', '51a5e811'),
+         ('gtg3_prom1_v1.5.prom1', '1e8744ad'),
+         ('gtg3_prom2_v1.5.prom2', 'e465c813'),
+         ('gtg3_prom3_v1.5.prom3', '3b25e198'),
+     ), ('gtg3-snd_u23_v1.1.u23', '2f4cde9f'), GT3D_GROM, GT3D_SHORT_SAMPLES, "66de52b0f7fcb92a1ec1f41741c665d7"),
+    ('gt3dv14', 'gt3d', 'Golden Tee 3D Golf (v1.4)', '1995', '3d_short', 'gt3d',
+     (
+         ('gtg3_prom0_v1.4.prom0', '396934a7'),
+         ('gtg3_prom1_v1.4.prom1', '5ba19b8d'),
+         ('gtg3_prom2_v1.4.prom2', '23991fcf'),
+         ('gtg3_prom3_v1.4.prom3', '2f7b5a26'),
+     ), ('gtg3-snd_u23_v1.0.u23', '4f106cd1'), GT3D_GROM, GT3D_SHORT_SAMPLES, "903aa172cda9572ea15def0cb5b68681"),
+    ('gt97', None, "Golden Tee '97 (v1.30)", '1997', 'aama', 'gt97',
+     (
+         ('gt97_prom0_v1.30.prom0', '7490ba4e'),
+         ('gt97_prom1_v1.30.prom1', '71f9c5f3'),
+         ('gt97_prom2_v1.30.prom2', '8292b51a'),
+         ('gt97_prom3_v1.30.prom3', '64539f72'),
+     ), ('gt97nr_u88_v1.0.u88', '2cee9e98'), GT97_GROM, GT97_SAMPLES, "23ef1ae17a0f71e1cfcf08a4e4a2cba3"),
+    ('gt97v122', 'gt97', "Golden Tee '97 (v1.22)", '1997', 'aama', 'gt97o',
+     (
+         ('gt97_prom0_v1.22.prom0', '4a543c99'),
+         ('gt97_prom1_v1.22.prom1', '27668628'),
+         ('gt97_prom2_v1.22.prom2', 'd73a769f'),
+         ('gt97_prom3_v1.22.prom3', '03962957'),
+     ), ('gt97nr_u88_v1.0.u88', '2cee9e98'), GT97_GROM, GT97_SAMPLES, "125d8bcdfbed3038dcf2140c785075a4"),
+    ('gt97v121', 'gt97', "Golden Tee '97 (v1.21)", '1997', 'aama', 'gt97o',
+     (
+         ('gt97_prom0_v1.21.prom0', 'a210a2c6'),
+         ('gt97_prom1_v1.21.prom1', 'a60806f8'),
+         ('gt97_prom2_v1.21.prom2', 'a97ce668'),
+         ('gt97_prom3_v1.21.prom3', '7a6b1ad8'),
+     ), ('gt97nr_u88_v1.0.u88', '2cee9e98'), GT97_GROM, GT97_SAMPLES, "427711789bf59103db98e80fb435a1c7"),
+    ('gt97s121', 'gt97', "Golden Tee '97 (v1.21S)", '1997', 's', 'gt97s',
+     (
+         ('gt97_prom0_v1.21s.prom0', '1143f45b'),
+         ('gt97_prom1_v1.21s.prom1', 'e7cfb1ea'),
+         ('gt97_prom2_v1.21s.prom2', '0cc24291'),
+         ('gt97_prom3_v1.21s.prom3', '922727c2'),
+     ), ('gtg3_nr_u23_v2.2.u23', '04effd73'), GT97_GROM, GT_S_SAMPLES, "69dc0fb0196c7620c1f628c023eeed65"),
+    ('gt97v120', 'gt97', "Golden Tee '97 (v1.20)", '1997', 'aama', 'gt97o',
+     (
+         ('gt97_prom0_v1.20.prom0', 'cdc4226f'),
+         ('gt97_prom1_v1.20.prom1', 'b36fc43f'),
+         ('gt97_prom2_v1.20.prom2', '30b0d97e'),
+         ('gt97_prom3_v1.20.prom3', '77281d3a'),
+     ), ('gt97nr_u88_v1.0.u88', '2cee9e98'), GT97_GROM, GT97_SAMPLES, "13edd89c835fd06943ff7513e9df4349"),
+    ('gt98', None, "Golden Tee '98 (v1.10)", '1998', 'aama', 'aama',
+     (
+         ('gt98_prom0_v1.10.prom0', 'dd93ab2a'),
+         ('gt98_prom1_v1.10.prom1', '6ea92960'),
+         ('gt98_prom2_v1.10.prom2', '27a8a15f'),
+         ('gt98_prom3_v1.10.prom3', 'd61f2bb2'),
+     ), ('gt98nr_u88_v1.0.u88', '2cee9e98'), GT98_GROM, GT98_SAMPLES, "52b7b73997bed06f656134cd1e198068"),
+    ('gt98v100', 'gt98', "Golden Tee '98 (v1.00)", '1998', 'aama', 'gt98',
+     (
+         ('gt98_prom0_v1.00.prom0', 'f2dc0a6c'),
+         ('gt98_prom1_v1.00.prom1', 'b0ca22f3'),
+         ('gt98_prom2_v1.00.prom2', 'f940acdc'),
+         ('gt98_prom3_v1.00.prom3', '22d7e8dc'),
+     ), ('gt98nr_u88_v1.0.u88', '2cee9e98'), GT98_GROM, GT98_SAMPLES, "9fc0d6b0120d04ee1cd773d5588ce1a5"),
+    ('gt98c100', 'gt98', "Golden Tee '98 (v1.00C)", '1998', 'aama', 'gt98',
+     (
+         ('gt98_prom0_v1.00c.prom0', 'bb508580'),
+         ('gt98_prom1_v1.00c.prom1', '0e414c17'),
+         ('gt98_prom2_v1.00c.prom2', '628e84eb'),
+         ('gt98_prom3_v1.00c.prom3', '870f2464'),
+     ), ('gt98nr_u88_v1.0.u88', '2cee9e98'), GT98_GROM, GT98_SAMPLES, "ccb4befd4c2d6567ac31bb350f83315c"),
+    ('gt98s100', 'gt98', "Golden Tee '98 (v1.00S)", '1998', 's', 'gt98s',
+     (
+         ('gt98_prom0_v1.00s.prom0', '962ff444'),
+         ('gt98_prom1_v1.00s.prom1', 'be0ac375'),
+         ('gt98_prom2_v1.00s.prom2', '304e881c'),
+         ('gt98_prom3_v1.00s.prom3', 'ac04ea81'),
+     ), ('gtg3_nr_u23_v2.2.u23', '04effd73'), GT98_GROM, GT_S_SAMPLES, "10a64b7cb10c23dc21d6d40829f0adb5"),
+    ('gt99', None, "Golden Tee '99 (v1.00)", '1999', 'aama', 'aama',
+     (
+         ('gt99_prom0_v1.00.prom0', '1ca05267'),
+         ('gt99_prom1_v1.00.prom1', '4fb757fa'),
+         ('gt99_prom2_v1.00.prom2', '3eb2b13a'),
+         ('gt99_prom3_v1.00.prom3', '03454e7d'),
+     ), ('gt99nr_u88_v1.0.u88', '2cee9e98'), GT99_GROM, GT99_SAMPLES, "a3857dacd431e97131c8990199f79d9e"),
+    ('gt99s100', 'gt99', "Golden Tee '99 (v1.00S)", '1999', 's', 's_ver',
+     (
+         ('gt99_prom0_v1.00s.prom0', '58e7c4e1'),
+         ('gt99_prom1_v1.00s.prom1', '09f8bdf4'),
+         ('gt99_prom2_v1.00s.prom2', 'fd084b68'),
+         ('gt99_prom3_v1.00s.prom3', '3ff88ff7'),
+     ), ('gtg3_nr_u23_v2.2.u23', '04effd73'), GT99_GROM, GT_S_SAMPLES, "d215ac40614512d698168f3fb4c1db01"),
+    ('gt2k', None, 'Golden Tee 2K (v1.00)', '2000', 'aama', 'aama',
+     (
+         ('gt2k_prom0_v1.00.prom0', 'b83d7b67'),
+         ('gt2k_prom1_v1.00.prom1', '89bd952d'),
+         ('gt2k_prom2_v1.00.prom2', 'b603d283'),
+         ('gt2k_prom3_v1.00.prom3', '85ba9e2d'),
+     ), ('gt2knr_u88_v1.0.u88', '2cee9e98'), GT2K_GROM, GT2K_SAMPLES, "33677ebf74f0891006010b33ce47fac0"),
+    ('gt2kp100', 'gt2k', 'Golden Tee 2K (v1.00, alternate protection)', '2000', 'gt2kp', 'aama',
+     (
+         ('gt2kprm0.10p', '16e8502d'),
+         ('gt2kprm1.10p', 'bf47cd95'),
+         ('gt2kprm2.10p', '204ddf15'),
+         ('gt2kprm3.10p', '45b9dd56'),
+     ), ('gt2knr_u88_v1.0.u88', '2cee9e98'), GT2K_GROM, GT2K_SAMPLES, "8b858e1fb1f244ede21c2b54e7cc972d"),
+    ('gt2ks100', 'gt2k', 'Golden Tee 2K (v1.00S)', '2000', 's', 's_ver',
+     (
+         ('gt2k_kit_prom0_v1.00m.prom0', '3aab67c8'),
+         ('gt2k_kit_prom1_v1.00m.prom1', '47d4a74d'),
+         ('gt2k_kit_prom2_v1.00m.prom2', '77a222cc'),
+         ('gt2k_kit_prom3_v1.00m.prom3', 'c3e77ad5'),
+     ), ('gtg3_nr_u23_v2.2.u23', '04effd73'), GT2K_GROM, GT_S_SAMPLES, "402fb444f1f059b531c1dec66b981c0d"),
+    ('gtclassc', None, 'Golden Tee Classic (v1.00)', '2001', 'aama', 'aama',
+     (
+         ('gt_classic_prom0_v1.00.prom0', 'a57e6ef0'),
+         ('gt_classic_prom1_v1.00.prom1', '15f8a831'),
+         ('gt_classic_prom2_v1.00.prom2', '2f260a93'),
+         ('gt_classic_prom3_v1.00.prom3', '03a1fcdd'),
+     ), ('gt_classicnr_u88_v1.0.u88', '2cee9e98'), GTCLASSIC_GROM, GTCLASSIC_SAMPLES, "a0088e72ba38261ad5f68ef26c8206f2"),
+    ('gtclasscp', 'gtclassc', 'Golden Tee Classic (v1.00, alternate protection)', '2001', 'gtclasscp', 'aama',
+     (
+         ('gtcpprm0.100', '21f0e0ea'),
+         ('gtcpprm1.100', 'd2a69fbc'),
+         ('gtcpprm2.100', 'a8dea029'),
+         ('gtcpprm3.100', '6016299e'),
+     ), ('gt_classicnr_u88_v1.0.u88', '2cee9e98'), GTCLASSIC_GROM, GTCLASSIC_SAMPLES, "98a9508f047a9a2db86c21e001b30ffa"),
+    ('gtclasscs', 'gtclassc', 'Golden Tee Classic (v1.00S)', '2001', 's', 's_ver',
+     (
+         ('gt_classic_prom0_v1.00m.prom0', '1e41884f'),
+         ('gt_classic_prom1_v1.00m.prom1', '31c18b2c'),
+         ('gt_classic_prom2_v1.00m.prom2', '8896efcb'),
+         ('gt_classic_prom3_v1.00m.prom3', '567a9490'),
+     ), ('gtg3_nr_u23_v2.2.u23', '04effd73'), GTCLASSIC_GROM, GT_S_SAMPLES, "285a0406acd2f4e5402b632e958a0f41"),
+)
+
+GT3D_GROM_T211 = (
+    ('gtg3_grom0_0++.grm0_0', '22c481b7'),
+    ('gtg3_grom0_1++.grm0_1', '40e4032b'),
+    ('gtg3_grom0_2++.grm0_2', '67a02ef9'),
+    ('gtg3_grom0_3++.grm0_3', '1173a710'),
+    ('gtg3_grom1_0+.grm1_0', '80ae7148'),
+    ('gtg3_grom1_1+.grm1_1', '0f85a618'),
+    ('gtg3_grom1_2+.grm1_2', '09ca5fbf'),
+    ('gtg3_grom1_3+.grm1_3', 'd136853a'),
+)
+GT98_GROM_DIAMOND = (
+    ('gt98_grom0_0.grm0_0', '2d79492b'),
+    ('gt98_grom0_1.grm0_1', '79afda1a'),
+    ('gt98_grom0_2.grm0_2', '8c381f56'),
+    ('gt98_grom0_3.grm0_3', '46c35ba6'),
+    ('gt98_grom1_0.grm1_0', 'b07bc634'),
+    ('gt98_grom1_1.grm1_1', 'b23d59a7'),
+    ('gt98_grom1_2.grm1_2', '9c113abc'),
+    ('gt98_grom1_3.grm1_3', '231bbe58'),
+    ('gt98_grome2_0.grm2_0', '0c898920'),
+    ('gt98_grome2_1.grm2_1', 'cbe5b2b2'),
+    ('gt98_grome2_2.grm2_2', '71bd4441'),
+    ('gt98_grome2_3.grm2_3', '86149804'),
+)
+GT2K_GROM_SUPREME = (
+    ('gt2k_grom0_0.grm0_0', 'c22b50f9'),
+    ('gt2k_grom0_1.grm0_1', 'd6d6be57'),
+    ('gt2k_grom0_2.grm0_2', '005d4791'),
+    ('gt2k_grom0_3.grm0_3', '0c998eb7'),
+    ('gt2k_grom1_0.grm1_0', '8b79d6e2'),
+    ('gt2k_grom1_1.grm1_1', '84ef1803'),
+    ('gt2k_grom1_2.grm1_2', 'd73d8afc'),
+    ('gt2k_grom1_3.grm1_3', '59f48688'),
+    ('gt_supreme_grom2_0.grm2_0', '33998a3e'),
+    ('gt_supreme_grom2_1.grm2_1', 'afa937ef'),
+    ('gt_supreme_grom2_2.grm2_2', '8f39c061'),
+    ('gt_supreme_grom2_3.grm2_3', 'c3c2337a'),
+)
+
+# Tournament editions (MAME init_aamat): the single board plus the M48T02
+# timekeeper. Same fields as GT_SETS.
+GT_TOURNAMENT_SETS = (
+    ('gt3dt231', 'gt3d', 'Golden Tee 3D Golf Tournament (v2.31)', '1995', 'aama_t', 'gt3d',
+     (
+         ('gtg3_prom0_v2.31t.prom0', '92a5c3e9'),
+         ('gtg3_prom1_v2.31t.prom1', 'a3b60226'),
+         ('gtg3_prom2_v2.31t.prom2', 'd1659616'),
+         ('gtg3_prom3_v2.31t.prom3', '1d231ea2'),
+     ), ('gtg3nr_u88_v1.0.u88', '2cee9e98'), GT3D_GROM_T, GT3D_SAMPLES, "ea6504dfc3615e253de4a85108b6edc1"),
+    ('gt3dt230', 'gt3d', 'Golden Tee 3D Golf Tournament (v2.30)', '1995', 'aama_t', 'gt3d',
+     (
+         ('gtg3_prom0_v2.30t.prom0', '4c658915'),
+         ('gtg3_prom1_v2.30t.prom1', 'f79fd0aa'),
+         ('gtg3_prom2_v2.30t.prom2', '372d24d7'),
+         ('gtg3_prom3_v2.30t.prom3', '82392f2c'),
+     ), ('gtg3nr_u88_v1.0.u88', '2cee9e98'), GT3D_GROM_T, GT3D_SAMPLES, "8d08f9a790bc7d3ff9501f1646a51f69"),
+    ('gt3dt211', 'gt3d', 'Golden Tee 3D Golf Tournament (v2.11)', '1995', 'aama_t', 'gt3d',
+     (
+         ('gtg3_prom0_v2.11t.prom0', '54360fdf'),
+         ('gtg3_prom1_v2.11t.prom1', '9142ebb7'),
+         ('gtg3_prom2_v2.11t.prom2', '058b906a'),
+         ('gtg3_prom3_v2.11t.prom3', '8dbeee1b'),
+     ), ('gtg3nr_u88_v1.0.u88', '2cee9e98'), GT3D_GROM_T211, GT3D_SAMPLES, "b6f2f855600ed7f99bde899fc6df586a"),
+    ('gt97t243', 'gt97', "Golden Tee '97 Tournament (v2.43)", '1997', 'aama_t', 'gt97o',
+     (
+         ('gt97_prom0_v2.43t.prom0', 'b8de60f1'),
+         ('gt97_prom1_v2.43t.prom1', '8152e5d3'),
+         ('gt97_prom2_v2.43t.prom2', 'b80061be'),
+         ('gt97_prom3_v2.43t.prom3', 'd184968d'),
+     ), ('gt97nr_u88_v1.0.u88', '2cee9e98'), GT97_GROM, GT97_SAMPLES, "7105721a2262a9759ca05bc7c5080870"),
+    ('gt97t240', 'gt97', "Golden Tee '97 Tournament (v2.40)", '1997', 'aama_t', 'gt97o',
+     (
+         ('gt97_prom0_v2.40t.prom0', '88a386d0'),
+         ('gt97_prom1_v2.40t.prom1', 'b0d751aa'),
+         ('gt97_prom2_v2.40t.prom2', '451be534'),
+         ('gt97_prom3_v2.40t.prom3', '70da8ca5'),
+     ), ('gt97nr_u88_v1.0.u88', '2cee9e98'), GT97_GROM, GT97_SAMPLES, "0323d768918e4dcace3a7537c26f675f"),
+    ('gt98t303', 'gt98', "Golden Tee '98 Tournament (v3.03)", '1998', 'aama_t', 'gt98s',
+     (
+         ('gt98_prom0_v3.03t.prom0', 'e3879c30'),
+         ('gt98_prom1_v3.03t.prom1', '6a42ab1e'),
+         ('gt98_prom2_v3.03t.prom2', 'a695c1bc'),
+         ('gt98_prom3_v3.03t.prom3', 'bd7f5c7a'),
+     ), ('gt98nr_u88_v1.0.u88', '2cee9e98'), GT98_GROM, GT98_SAMPLES, "94aa8cefa7f24d5e2fa837340327c85f"),
+    ('gt98t302', 'gt98', "Golden Tee '98 Tournament (v3.02)", '1998', 'aama_t', 'gt98s',
+     (
+         ('gt98_prom0_v3.02t.prom0', '744e0d9b'),
+         ('gt98_prom1_v3.02t.prom1', 'b25508a1'),
+         ('gt98_prom2_v3.02t.prom2', '98a3466e'),
+         ('gt98_prom3_v3.02t.prom3', '17c3152a'),
+     ), ('gt98nr_u88_v1.0.u88', '2cee9e98'), GT98_GROM, GT98_SAMPLES, "2cac70975c3e7b7dedeb9977225c1b62"),
+    ('gtdiamond', 'gt98', 'Golden Tee Diamond Edition Tournament (v3.05T ELC)', '1998', 'aama_t', 'gt98s',
+     (
+         ('gt98_golf_elc_prom0_v3.05tl.prom0', 'b6b0e3b8'),
+         ('gt98_golf_elc_prom1_v3.05tl.prom1', 'ba15f3a3'),
+         ('gt98_golf_elc_prom2_v3.05tl.prom2', '015e1c94'),
+         ('gt98_golf_elc_prom3_v3.05tl.prom3', 'd990528b'),
+     ), ('gt98nr_u88_v1.0.u88', '2cee9e98'), GT98_GROM_DIAMOND, GT98_SAMPLES, "4ce4854829cdef81a640f953045228b0"),
+    ('gt99t400', 'gt99', "Golden Tee '99 Tournament (v4.00)", '1999', 'aama_t', 'gt98s',
+     (
+         ('gt99_prom0_v4.00t.prom0', 'bc58e0a2'),
+         ('gt99_prom1_v4.00t.prom1', '89d8cc6b'),
+         ('gt99_prom2_v4.00t.prom2', '891e26c1'),
+         ('gt99_prom3_v4.00t.prom3', '127f7aa7'),
+     ), ('gt99nr_u88_v1.0.u88', '2cee9e98'), GT99_GROM, GT99_SAMPLES, "2ed36c1633fa38611edf67398a6fa526"),
+    ('gtroyal', 'gt99', 'Golden Tee Royal Edition Tournament (v4.02T EDM)', '1999', 'aama_t', 'gt98s',
+     (
+         ('gtr_prom0_v4.02t_edm.prom0', 'ae499ea3'),
+         ('gtr_prom1_v4.02t_edm.prom1', '87ee04b5'),
+         ('gtr_prom2_v4.02t_edm.prom2', 'a925d392'),
+         ('gtr_prom3_v4.02t_edm.prom3', '1c442664'),
+     ), ('gt99nr_u88_v1.0.u88', '2cee9e98'), GT99_GROM, GT99_SAMPLES, "dc91435698d2b8fea02c6debd1eec490"),
+    ('gt2kt500', 'gt2k', 'Golden Tee 2K Tournament (v5.00)', '2000', 'aama_t', 'gt98s',
+     (
+         ('gt2k_prom0_v5.00t.prom0', '8f20f9eb'),
+         ('gt2k_prom1_v5.00t.prom1', 'bdecc1f5'),
+         ('gt2k_prom2_v5.00t.prom2', '46666c15'),
+         ('gt2k_prom3_v5.00t.prom3', '89544fbc'),
+     ), ('gt2knr_u88_v1.0.u88', '2cee9e98'), GT2K_GROM, GT2K_SAMPLES, "19ea2b2e6a54586c1bb47f178dfb6fc9"),
+    ('gtsupreme', 'gt2k', 'Golden Tee Supreme Edition Tournament (v5.10T ELC S)', '2002', 'aama_t', 'gt98s',
+     (
+         ('gtg_sup_elc_prom0_5.10t.prom0', 'a14f7e2b'),
+         ('gtg_sup_elc_prom1_5.10t.prom1', '772f4dc9'),
+         ('gtg_sup_elc_prom2_5.10t.prom2', 'fbaae916'),
+         ('gtg_sup_elc_prom3_5.10t.prom3', '69b13204'),
+     ), ('gt2knr_u88_v1.0.u88', '2cee9e98'), GT2K_GROM_SUPREME, GT2K_SAMPLES, "55a25ea2f92fecdb20c8a47380c9d9d9"),
+)
+
+
+def gt_pad(size: int) -> str:
+    return f'        <part repeat="{size:#x}">00</part>'
+
+
+def gt_sample_rom(rom: tuple[str, str], size: int) -> str:
+    # ROM_LOAD16_BYTE fills the even byte of each 16-bit sample word.
+    name, crc = rom
+    return (
+        '        <interleave output="16">\n'
+        f'            <part name="{name}" crc="{crc}" map="01" />\n'
+        f'            <part map="10" repeat="{size:#x}">00</part>\n'
+        '        </interleave>'
+    )
+
+
+def golden_tee_mra(spec: tuple) -> str:
+    setname, parent, title, year, board, ports, program, sound, grom, samples, md5 = spec
+    selector, trackballs, layout = GT_BOARDS[board]
+    timekeeper = board in GT_TIMEKEEPER_BOARDS
+    # The tournament programs fill the 4 MiB region; the others use half.
+    program_bytes = 0x400000 if timekeeper else 0x200000
+    zip_names = f"{setname}.zip" if parent is None else f"{setname}.zip|{parent}.zip"
+    dips = [f'        <dip name="{name}" bits="{bit}" ids="{ids}" />'
+            for bit, (name, ids) in GT_DIPS[ports]]
+    dips.append('        <dip name="Service Mode" bits="3" ids="Off,On" />')
+    if trackballs == 2:
+        controls = ("The mouse, left stick or d-pad moves trackball 1; with Two Trackballs set, "
+                    "player 2 uses the second controller's stick or d-pad.")
+    else:
+        controls = "The mouse, left stick or d-pad moves this board's single trackball."
+    sound_name, sound_crc = sound
+    lines = [
+        "<?xml version='1.0' encoding='utf-8'?>",
+        "<misterromdescription>",
+        f"    <name>{title}</name>",
+        f"    <setname>{setname}</setname>",
+        "    <rbf>ITech32</rbf>",
+        "    <mameversion>0288</mameversion>",
+        f"    <year>{year}</year>",
+        "    <manufacturer>Incredible Technologies</manufacturer>",
+        "    <players>4</players>",
+        "    <joystick>Trackball</joystick>",
+        "    <rotation>Horizontal</rotation>",
+        "    <region>World</region>",
+        "    <platform>Incredible Technologies 32-bit</platform>",
+        "    <category>Sports</category>",
+        "    <!--DIP bits0..3 map to native masks10/20/40/80, physical SW1:4/3/2/1.-->",
+        '    <switches default="00">',
+        *dips,
+        "    </switches>",
+        "    <!--MAME: B1 Face Left, B2 Face Right; player 1's B3/B4 are the cabinet's Volume "
+        f"Up/Down. {controls}-->",
+        '    <buttons names="Face Left,Face Right,Volume Up,Volume Down,-,-,Start,Coin" '
+        'default="A,B,X,Y,Start,Select" count="4" />',
+        f"    <!--Board selector {selector} must precede the address30000000 bulk stream.-->",
+        '    <rom index="1">',
+        f"        <part>{selector}</part>",
+        "    </rom>",
+        *(("    <!-- 128 KiB battery-backed NVRAM at CPU 0x600000-0x61ffff, then the 2 KiB "
+            "M48T02 timekeeper at 0x681000-0x6817ff. -->",
+            f'    <nvram index="2" size="{NVRAM_TIMEKEEPER_BYTES}" />') if timekeeper else
+          ("    <!-- 128 KiB battery-backed NVRAM at CPU 0x600000-0x61ffff. -->",
+           '    <nvram index="2" size="131072" />')),
+        f'    <rom index="0" zip="{zip_names}" address="0x30000000" md5="{md5}">',
+        "        <!-- 0x0000000: 68EC020 program, 4 MiB. -->" if timekeeper else
+        "        <!-- 0x0000000: 68EC020 program, 2 MiB of the 4 MiB region. -->",
+        '        <interleave output="32">',
+        program32(program),
+        "        </interleave>",
+        *([] if timekeeper else [gt_pad(0x400000 - program_bytes)]),
+        "        <!-- 0x0400000: 6809 sound region; bank 0 at 0x10000. -->",
+        gt_pad(0x8000),
+        f'        <part name="{sound_name}" crc="{sound_crc}" offset="0x18000" length="0x8000" />',
+        f'        <part name="{sound_name}" crc="{sound_crc}" offset="0x0" length="0x18000" />',
+        gt_pad(0xd8000),
+        "        <!-- 0x0500000: GROM; the blitter wraps at the 0x600000 MAME region. -->",
+    ]
+    # Three 2 MiB groups, or (GT 3D v2.11) one 4 MiB and one 2 MiB group.
+    for group in range(len(grom) // 4):
+        lines += ['        <interleave output="32">', program32(grom[group * 4:group * 4 + 4]),
+                  "        </interleave>"]
+    if layout == "three":
+        rom0, srom1, srom2, srom3 = samples
+        lines += [
+            gt_pad(0x1700000),
+            "        <!-- 0x2200000: ES5506 bank 3 (ensoniq.3), slot C at the top of the GROM "
+            "window. -->",
+            gt_sample_rom(srom3, 0x20000), gt_pad(0x3c0000),
+            "        <!-- 0x2600000: ES5506 bank 0 (ensoniq.0), slot A. -->",
+            gt_sample_rom(rom0, 0x200000),
+            "        <!-- 0x2a00000: ES5506 bank 2 (ensoniq.2), slot B. -->",
+            gt_sample_rom(srom1, 0x80000), gt_pad(0x100000),
+            gt_sample_rom(srom2, 0x80000), gt_pad(0x100000),
+        ]
+    else:
+        low, high = samples
+        bank = "bank 0 (ensoniq.0)" if layout == "single" else "bank 2 (ensoniq.2)"
+        lines += [
+            gt_pad(0x1b00000),
+            f"        <!-- 0x2600000: ES5506 {bank}, slot A. -->",
+            gt_sample_rom(low, 0x100000), gt_sample_rom(high, 0x80000), gt_pad(0x100000),
+            "        <!-- 0x2a00000: slot B, unused. -->",
+            gt_pad(0x400000),
+        ]
+    lines += ["    </rom>", "</misterromdescription>"]
+    return "\n".join(lines) + "\n"
+
+
+def generate_golden_tee() -> list[Path]:
+    # The releases are checked, not written: they stay reviewable files.
+    titles = {spec[0]: spec[2] for spec in GT_SETS}
+    written = []
+    for spec in GT_SETS + GT_TOURNAMENT_SETS:
+        setname, parent, title = spec[:3]
+        text = golden_tee_mra(spec)
+        if parent is None:
+            release = RELEASES / f"{title}.mra"
+            if release.read_text(encoding="utf-8") != text:
+                raise RuntimeError(f"{release.name} differs from its Golden Tee description")
+        else:
+            group = titles[parent].rsplit(" (", 1)[0]
+            written.append(write_alternative(group, f"{title}.mra", text))
+    return written
+
+
+# World Class Bowling Tournament (MAME init_wcbowlt): the Deluxe board's
+# protection address, GROM data and samples, plus the M48T02 timekeeper.
+WCBOWLDX_PARENT = ("World Class Bowling Deluxe (v2.00)", "wcbowldx", "wcbowldx.zip|wcbowl.zip",
+                   "9b306690bcaad3461611b62fe28eba04")
+WCBOWLDX_PROGRAM = (("wcbd_prom0_2.00.prom0", "280df7f0"), ("wcbd_prom1_2.00.prom1", "526eded0"),
+                    ("wcbd_prom2_2.00.prom2", "cb263173"), ("wcbd_prom3_2.00.prom3", "43ecad0b"))
+# setname, title, program, MAME input-port group, MD5.
+WCBOWL_TOURNAMENT_SPECS = (
+    ("wcbowl140", "World Class Bowling Tournament (v1.40)",
+     (("wcbf_prom0_1.40.prom0", "9d31ceb1"), ("wcbf_prom1_1.40.prom1", "c6669452"),
+      ("wcbf_prom2_1.40.prom2", "d2fc4d09"), ("wcbf_prom3_1.40.prom3", "c41258a4")),
+     "wcbowldx", "da5e20d5f0a7c3a039e7926b31e55927"),
+    ("wcbowl130", "World Class Bowling Tournament (v1.30)",
+     (("wcb_prom0_v1.30t.prom0", "fbcde4e0"), ("wcb_prom1_v1.30t.prom1", "f4b8e7c3"),
+      ("wcb_prom2_v1.30t.prom2", "f441afae"), ("wcb_prom3_v1.30t.prom3", "47e26d4b")),
+     "wcbowlo", "cd7f16ad6661dc5aa925c7d06ad66b9d"),
+)
+
+
+def generate_wcbowl_tournament() -> list[Path]:
+    template = (RELEASES / f"{WCBOWLDX_PARENT[0]}.mra").read_text(encoding="utf-8")
+    written = []
+    for setname, title, program, ports, md5 in WCBOWL_TOURNAMENT_SPECS:
+        # MAME makes these clones of wcbowl, not of the Deluxe set.
+        text = retitle_020(template, WCBOWLDX_PARENT, setname, title, md5)
+        text = replace_once(text, f'zip="{setname}.zip|wcbowldx.zip"',
+                            f'zip="{setname}.zip|wcbowl.zip"', setname)
+        text = replace_once(text, "<year>1999</year>", "<year>1997</year>", setname)
+        text = replace_once(text, program32(WCBOWLDX_PROGRAM), program32(program), setname)
+        text = replace_once(text, "<!--Board selector 08 must", "<!--Board selector 12 must",
+                            setname)
+        text = replace_once(text, "        <part>08</part>", "        <part>12</part>", setname)
+        text = replace_once(
+            text,
+            "    <!-- 128 KiB battery-backed NVRAM at CPU 0x600000-0x61ffff. -->\n"
+            '    <nvram index="2" size="131072" />',
+            "    <!-- 128 KiB battery-backed NVRAM at CPU 0x600000-0x61ffff, then the 2 KiB "
+            "M48T02 timekeeper at 0x681000-0x6817ff. -->\n"
+            f'    <nvram index="2" size="{NVRAM_TIMEKEEPER_BYTES}" />',
+            setname)
+        for group in (0, 1):
+            for part in range(4):
+                text = replace_once(text, f'name="wcbd_grom{group}_{part}_s.grm{group}_{part}"',
+                                    f'name="wcb_grom{group}_{part}_s.grm{group}_{part}"', setname)
+        for part in range(4):
+            text = replace_once(text, f'name="wcbd_grom2_{part}_s.grm2_{part}"',
+                                f'name="wcbf_grom2_{part}.grm2_{part}"', setname)
+        if ports == "wcbowlo":
+            text = replace_once(text, FLIP_DIP, FLIP_DIP + "\n" + FREEZE_DIP, setname)
+        written.append(write_alternative("World Class Bowling", f"{title}.mra", text))
+    return written
+
+
 def main() -> int:
     OUTPUT.mkdir(parents=True, exist_ok=True)
     written = (generate_timekill() + generate_bloodstorm() + generate_sftm() +
                generate_hardyard() + generate_pairs() + generate_hotmemry() +
-               generate_wcbowl() + generate_wcbowl_020() + generate_shufshot())
+               generate_wcbowl() + generate_wcbowl_020() + generate_shufshot() +
+               generate_wcbowl_tournament() + generate_golden_tee())
     expected = {path.resolve() for path in written} | {WCBOWL_68000_TEMPLATE.resolve()}
     actual = {path.resolve() for path in OUTPUT.rglob("*.mra")}
     if actual != expected:

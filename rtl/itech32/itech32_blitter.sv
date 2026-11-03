@@ -323,7 +323,7 @@ module itech32_blitter
 		input logic [11:0] x_value,
 		input logic [11:0] y_value
 	);
-		if (profile.vram_two_planes)
+		if (profile.vram_512_rows)
 			integer_vram_address = {1'b0, y_value[8:0], x_value[8:0]};
 		else
 			integer_vram_address = {y_value[9:0], x_value[8:0]};
@@ -333,7 +333,7 @@ module itech32_blitter
 		input logic signed [31:0] x_value,
 		input logic signed [31:0] y_value
 	);
-		if (profile.vram_two_planes)
+		if (profile.vram_512_rows)
 			fixed_vram_address = {1'b0, y_value[16:8], x_value[16:8]};
 		else
 			fixed_vram_address = {y_value[17:8], x_value[16:8]};
@@ -444,7 +444,12 @@ module itech32_blitter
 
 	always_comb begin
 		case (reg_addr_q)
-			REG_STATUS:   reg_read_value = (video_regs[REG_STATUS] & 16'hfff7) | 16'h0005;
+			// MAME returns the written value; boards with live status replace
+			// bits 7:6 with the blitter's ready/busy state.
+			REG_STATUS:   reg_read_value = profile.blitter_status_live ?
+				({video_regs[REG_STATUS][15:8], !busy, busy, video_regs[REG_STATUS][5:0]} &
+				 16'hfff7) | 16'h0005 :
+				(video_regs[REG_STATUS] & 16'hfff7) | 16'h0005;
 			REG_INTSTATE: reg_read_value = interrupt_state;
 			REG_FLAGS:    reg_read_value = 16'h00ef;
 			default:      reg_read_value = video_regs[reg_addr_q];

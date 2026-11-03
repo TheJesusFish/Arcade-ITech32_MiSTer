@@ -9,6 +9,8 @@ module itech32_blitter_tb;
 	logic clk = 0;
 	logic reset = 1;
 	logic timekill_mode = 1'b0;
+	// Golden Tee profile: live blitter busy/ready in status bits 7:6.
+	logic live_status_mode = 1'b0;
 	logic reg_req, reg_we;
 	logic [6:0] reg_addr;
 	logic [15:0] reg_wdata;
@@ -85,7 +87,9 @@ module itech32_blitter_tb;
 		vram_mem[vram_saved_plane][vram_saved_addr];
 
 	itech32_blitter dut (
-		.clk(clk), .reset(reset), .profile(itech32_profile_tb_pkg::mode_profile(timekill_mode, 1'b0)),
+		.clk(clk), .reset(reset), .profile(live_status_mode ?
+			itech32_profile_pkg::profile_for_selector(itech32_profile_pkg::SELECT_GT_AAMA) :
+			itech32_profile_tb_pkg::mode_profile(timekill_mode, 1'b0)),
 		.reg_req(reg_req), .reg_we(reg_we), .reg_addr(reg_addr),
 		.reg_wdata(reg_wdata), .reg_be(reg_be), .reg_ack(reg_ack), .reg_rdata(reg_rdata),
 		.color0_we(color0_we), .color1_we(color1_we), .color_data(color_data),
@@ -721,6 +725,32 @@ module itech32_blitter_tb;
 			timing_vblank_start==16'h00f3 && timing_vblank_end==16'h0003 && timing_htotal==16'h01fc &&
 			timing_hsync==16'h01e4 && timing_hblank_start==16'h01b2 && timing_hblank_end==16'h0032 &&
 			display_yorigin1==16'h0021 && display_xorigin1==16'h0043,"V11 timing/origin exports");
+
+		// V12: status bits 7:6. MAME (and the default profile) return the
+		// written value, always "ready" (10); the Golden Tee profile reports
+		// 01 while a command runs and 10 when idle.
+		clear_mem(16'hdead); pulse_reset();
+		reg_write(7'h00, 16'h008f);
+		configure(16'h0000, 16'd64, 16'd32, 16'd10, 16'd10);
+		reg_write(7'h04, 16'd1);
+		reg_read(7'h00, got);
+		expect_value(busy && got == 16'h0087, "V12 written status while busy");
+		wait_idle();
+		live_status_mode = 1'b1;
+		#1;
+		reg_read(7'h00, got);
+		expect_value(got == 16'h0087, "V12 live status ready");
+		configure(16'h0000, 16'd64, 16'd32, 16'd10, 16'd10);
+		reg_write(7'h04, 16'd1);
+		reg_read(7'h00, got);
+		expect_value(busy && got == 16'h0047, "V12 live status busy");
+		wait_idle();
+		reg_read(7'h00, got);
+		expect_value(got == 16'h0087, "V12 live status ready after command");
+		reg_write(7'h04, 16'd4);
+		reg_read(7'h00, got);
+		expect_value(got == 16'h0087, "V12 live status after immediate command");
+		live_status_mode = 1'b0;
 
 		if (failures != 0)
 			$fatal(1, "%0d of %0d checks failed", failures, tests);

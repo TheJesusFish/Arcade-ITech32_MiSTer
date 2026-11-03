@@ -22,7 +22,7 @@ MEMORY = ["rtl/memory/itech32_ddr_sound_cache.sv", "rtl/memory/itech32_ddr_grom_
           "sys/f2sdram_safe_terminator.sv"]
 ES5506 = [SOUND + "itech32_es5506_par.sv", SOUND + "itech32_es5506.sv"]
 PAR_PINS = [SOUND + "itech32_es5506_par_pins.sv"]
-INPUTS = [CORE + "itech32_trackball.sv", CORE + "itech32_inputs.sv"]
+INPUTS = [CORE + "itech32_trackball.sv", CORE + "itech32_lightgun.sv", CORE + "itech32_inputs.sv"]
 BLOOD_BUS = [CORE + "itech32_main_bus.sv", CORE + "itech32_blitter.sv",
              "sim/tb/itech32_bloodstorm_bus_env.sv"]
 SOUND_CACHE_PHASE = [CORE + "itech32_rate_enable.sv", *MEMORY,
@@ -66,10 +66,19 @@ TESTS = {
     "inputs": test("itech32_inputs_tb", INPUTS),
     "blood-inputs": test("itech32_bloodstorm_inputs_tb", INPUTS),
     "family-inputs": test("itech32_bloodstm_family_inputs_tb", INPUTS),
+    "keyboard": test("itech32_keyboard_tb", [CORE + "itech32_keyboard.sv"]),
+    "timekeeper": test("itech32_timekeeper_tb", [CORE + "itech32_timekeeper.sv"]),
+    "lightgun": test("itech32_lightgun_tb", [CORE + "itech32_lightgun.sv"]),
+    "gun-irq": test("itech32_gun_irq_tb", [CORE + "itech32_gun_irq.sv"]),
+    "crosshair": test("itech32_crosshair_tb", [CORE + "itech32_crosshair.sv"]),
+    "shoottv-bus": test("itech32_shoottv_bus_tb", [CORE + "itech32_main_bus.sv"]),
+    "timekeeper-bus": test("itech32_timekeeper_bus_tb", [CORE + "itech32_main_bus.sv",
+                                                         CORE + "itech32_timekeeper.sv"]),
     "cpu-adapter": test("itech32_tg68_bus_adapter_tb", [CORE + "itech32_tg68_bus_adapter.sv"]),
     "blitter": test("itech32_blitter_tb", [CORE + "itech32_blitter.sv"]),
+    "scanout-planes": test("itech32_scanout_planes_tb", [CORE + "itech32_scanout.sv"]),
     "graphics-queue": test("itech32_graphics_queue_tb",
-                           [CORE + "itech32_board.sv", CORE + "itech32_main_bus.sv",
+                           [CORE + "itech32_board.sv", CORE + "itech32_gun_irq.sv", CORE + "itech32_main_bus.sv",
                             CORE + "itech32_blitter.sv", CORE + "itech32_vram_arbiter.sv",
                             CORE + "itech32_video_timing.sv", CORE + "itech32_scanout.sv",
                             "sim/tb/itech32_graphics_cpu_bfm.sv", *MEMORY],
@@ -78,6 +87,7 @@ TESTS = {
     "rle-prefetch": test("itech32_rle_prefetch_tb", [CORE + "itech32_blitter.sv"]),
     "sftm-protection": test("itech32_sftm_protection_tb", [CORE + "itech32_main_bus.sv"]),
     "wcbowl-bus": test("itech32_wcbowl_main_bus_tb", [CORE + "itech32_main_bus.sv"]),
+    "golden-tee-bus": test("itech32_golden_tee_main_bus_tb", [CORE + "itech32_main_bus.sv"]),
     "blood-bus": test("itech32_bloodstorm_main_bus_tb", BLOOD_BUS),
     "blood-init": test("itech32_blood_init_ram_tb", BLOOD_BUS),
     "ddr": test("itech32_ddr_memory_tb", MEMORY, defines=("ITECH32_WRITE_OVERLAP",),

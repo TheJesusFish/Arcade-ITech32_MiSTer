@@ -394,6 +394,240 @@ Adds the trackball games on the SFTM board (MAME `sftm` machine with
   `7B423347EEB9DAE8E758E67AC8466E3E3DA183ED264699C93DC908C5F9038548`.
 - Not yet hardware-tested. This RBF supersedes the World Class Bowling build.
 
+## Golden Tee test build (2026-11-02)
+
+Adds the non-tournament Golden Tee sets (MAME `sftm` machine with
+`init_gt_common`):
+
+- Releases: Golden Tee 3D Golf v1.93N (`gt3d`), '97 v1.30 (`gt97`), '98 v1.10
+  (`gt98`), '99 v1.00 (`gt99`), 2K v1.00 (`gt2k`) and Classic v1.00
+  (`gtclassc`), with 21 alternatives. Selectors: `0a` single board, `0b`/`0c`
+  the alternate-protection 2K and Classic sets, `0d` the one-trackball "S"
+  board, `0e`/`0f` the three-tier Golden Tee 3D short and long ROM boards.
+- Board features: two 1024-row framebuffer planes (Time Killers' two planes
+  have 512 rows; the plane height is now its own profile field), the base
+  `itech020_map` colour latches, the protection byte at `0x112f` and the fixed
+  `0x680000` results of `init_gt2kp`/`init_gtclasscp`, a 12-page GROM, four
+  trackball wirings (including 8-bit counters on the GT 3D short board),
+  volume buttons on player 1's B3/B4, and a third ES5506 sample slot (C) at
+  the top of the GROM window for the three-tier boards' bank 3. The itech020
+  GROM bank bits now follow MAME's mask, so only SFTM uses them.
+- Trackball counts now leave at a per-board rate, measured in MAME 0.288: the
+  single and "S" boards read sixteen times per frame (gaps up to 1.57 ms,
+  3600 Hz), the GT 3D long board eight (3.2 ms, 1600 Hz), and the short board
+  reads its 8-bit counters every second or third frame (50 ms, 2200 Hz).
+  Stick and d-pad speed are unchanged, as is bowling and Shuffleshot behavior.
+- A MAME I/O census of six boards found no access to the serial DUART or the
+  tournament timekeeper; protection is read only at `0x680002` (0x00 and 0x80
+  on the alternate-protection sets, as modeled); the GROM bank bits are never
+  set.
+- The descriptors, releases included, are generated from a table emitted from
+  MAME's ROM listing. All 27 streams match MAME's loaded regions byte-for-byte;
+  all 72 repository descriptors reproduce their MD5s.
+- Simulation: new `golden-tee-bus` and `scanout-planes` (MAME `screen_update`
+  for one and two planes of both heights) benches; `trackball`,
+  `family-inputs`, `game-selector`, `wcbowl-bus` and `ddr` (slot C) extended.
+  The full suite passes 99 runs across 50 testbenches; four planted mutations
+  (old plane height, unswapped colour latches, swapped GT 3D long trackball
+  bytes, one release rate) were each rejected. Lint reports no new core-side
+  warnings.
+- Quartus Prime Lite 17.0.2 (default seed): worst setup slack `+0.461 ns` (HDMI
+  scaler), core clock `+1.223 ns`, worst hold `+0.116 ns`, TNS `0` at all four
+  corners; post-fit HDMI check reports physical C5. Utilization is 25,883 ALMs,
+  32,606 registers, 444 RAM blocks, 48 DSP blocks, and 3 of 6 PLLs. RBF
+  SHA-256: `92D0A9F13B1C5B3B7A131BE8098BF13FAD749DBECEF04C790189519806C9E68C`.
+- Not yet hardware-tested. This RBF supersedes the 68EC020 trackball build.
+  The tournament editions need the M48T02 timekeeper and are not supported.
+
+### Hardware findings and fixes
+
+The first hardware test (user report, then the USB-1 test MiSTer with the
+capture card) found no sound in any Golden Tee game and a hang at the first
+course (attract mode froze on a tip screen just before its gameplay demo).
+
+- No sound: Golden Tee writes sound commands as a word at `0x480000`; the core
+  decoded only the byte address `0x480001` (SFTM's byte write), so every
+  command was dropped. The itech020 decode now takes the dword and gates on
+  byte lane `+1`, as MAME's handler does. Hardware: Golden Tee '97's attract
+  audio went from -91 dB (silence) to -26 dB mean.
+- Hang: an on-chip recorder of the main CPU's bus (scratch diagnostic build,
+  read over JTAG) showed the CPU spinning at `0x805042` on the blitter command
+  queue's read pointer (`0x1994`) with the blitter idle and no interrupt
+  pending. Golden Tee's queue code waits on video status bits 7:6 (busy/ready)
+  before switching its blitter interrupt off; MAME, whose blits are instant,
+  always reads "ready", and so did the core, whose blits take time. A queued
+  blit's completion was then wiped by the polled loop's acknowledge and the
+  queue deadlocked. The Golden Tee profile now reports live busy/ready bits.
+- Ruled out on the way, by replay or simulation: all 61,113 blitter commands
+  of Golden Tee '97's first 1,300 frames (captured from MAME, replayed through
+  the core's blitter) complete; program-ROM reads above 512 KiB (Golden Tee is
+  the first 2 MiB program) return correct data; the scanline-interrupt chain
+  matches MAME (lines 1, 16 ... 224, 239; register 3 reads 0xef).
+- Hardware check of the fixed core on the USB-1 test MiSTer (virtual gamepad
+  through uinput, capture card for video and audio): Golden Tee '97 v1.30 runs
+  its whole attract cycle including the gameplay demo, takes coins, selects
+  players and Pine Creek, and plays a swing to the second stroke. Golden Tee
+  3D v1.8 (short ROM board, sample slot C) and v1.92L (long ROM board), '97
+  v1.21S ("S" board), '99, and the alternate-protection 2K and Classic sets
+  each boot and run their attract demos with sound. The trackball responds to
+  the stick and d-pad; a mouse was not exercised beyond small test moves.
+- Fixed build, Quartus Prime Lite 17.0.2: the default seed missed by 0.282 ns
+  on one HDMI-scaler path at the slow -40C corner, so the fitter was re-run
+  with `--seed=7` on the same synthesis (`quartus_fit ... --seed=7`, then
+  `quartus_asm` and `quartus_sta`). Worst setup slack `+0.404 ns` (HDMI
+  scaler), core clock `+1.066 ns`, worst hold `+0.098 ns`, TNS `0` at all
+  four corners; post-fit HDMI check reports physical C5. Utilization is
+  25,880 ALMs, 32,506 registers, 444 RAM blocks, and 48 DSP blocks. RBF
+  SHA-256: `19F699D734063B9A562DF139A0FDC655D38C126A4143D51D1D0B8DCA65B1F04C`.
+  The full suite passes 99 runs across 50 testbenches; lint reports no new
+  core-side warnings. This RBF supersedes the first Golden Tee build.
+
+## Power Up Baseball and keyboard test build (2026-11-03)
+
+Adds Power Up Baseball (MAME `pubball`, a 1996 prototype) and keyboard
+controls for every game:
+
+- Selector `10`: MAME's `pubball` machine is the SFTM board with
+  `init_pubball`'s two 1024-row planes, SFTM's colour latches, two 4-bit
+  trackballs at `0x180800`/`0x181000`, a 28-page (14 MiB) GROM without bank
+  bits, a six-bank sound ROM, and samples in ES5506 banks 0 and 1. MAME never
+  sets its protection address, so the read returns work-RAM byte 0 as MAME's
+  does. P3 carries both players' Third Base, Home and Power Up buttons in
+  SFTM's positions with bits 6/7 low; the input-layout field grew to four bits
+  for it.
+- A MAME 0.288 census of the game's I/O (Lua taps, earlier session) found
+  SFTM-style colour writes, the sound command as SFTM's byte at `0x480001`,
+  one protection read, and the blitter interrupt acknowledged only in its
+  handler (so MAME's static status value is kept). The trackballs are read
+  sixteen times per frame with gaps up to 3.84 ms, inside the 1600 Hz
+  release rate's seven-count reach.
+- `Power Up Baseball (prototype).mra`: odd-sized program and sample ROMs; the
+  program region's tail is `0xff` as MAME's `ROMREGION_ERASEFF` leaves it.
+  The stream matches MAME's loaded regions byte-for-byte and reproduces MD5
+  `469af21ca1932a34e2d560faa47a2848`. The game has no clones.
+- Keyboard: `itech32_keyboard` decodes `hps_io`'s `ps2_key` with MAME's
+  default keys and ORs them into controllers 1 and 2 ahead of the OSD gate,
+  so the arrow keys also move the trackballs (Main_MiSTer maps a keyboard to
+  a joystick only with `keyboard_as_joystick`). Held keys clear while the OSD
+  is open.
+- Simulation: new `keyboard` bench (73 checks); `family-inputs` (334 checks,
+  Power Up Baseball's ports and release rate) and `game-selector` (17
+  profiles) extended. The full suite passes 100 runs across 51 testbenches.
+- Quartus Prime Lite 17.0.2 (default seed): worst setup slack `+0.046 ns`
+  (HDMI scaler, slow -40C corner), core clock `+0.709 ns`, worst hold
+  `+0.058 ns`, TNS `0` at all four corners. Synthesis reports the same 53
+  warnings as the previous build. Utilization is 25,948 ALMs, 32,593
+  registers, 444 RAM blocks, and 48 DSP blocks. RBF SHA-256:
+  `C010981C7DA19288A216FA6972B81D4B2F12ED360903C230609BA69C8536F0E4`.
+- Hardware, USB-1 test MiSTer (a uinput virtual keyboard driven over SSH and
+  the capture card): the game boots to its attract cycle (high scores, MLB
+  licence screens, player cards). Key `5` inserts coins with sound and `1`
+  buys innings. On the "play ball / enter initials / draft team" menu the
+  Down and Up arrows move the trackball cursor down and up, and Right and Left
+  move it as well. A batting inning plays with sound (peaks near -6 dB); the
+  batter swung and changed stance when Left Ctrl and Left Alt were pressed.
+  This RBF supersedes the Golden Tee fixed build.
+
+## Tournament editions test build (2026-11-03)
+
+Adds the twelve Golden Tee and two World Class Bowling tournament editions
+(MAME `tourny` machine: `sftm` plus the M48T02 timekeeper):
+
+- Selectors `11` (`init_aamat`: the single Golden Tee board) and `12`
+  (`init_wcbowlt`: the Deluxe bowling row), with a `timekeeper` profile field.
+  The 2 KiB at `0x681000-0x6817ff` is four byte-lane RAMs in the main bus;
+  `itech32_timekeeper` holds the clock registers after MAME's `timekpr.cpp`
+  and starts from the MiSTer RTC (`hps_io` `RTC`, now connected) at each game
+  load. The saved image grows to 133120 bytes for these sets (the NVRAM host
+  address is now 18 bits); the other games' images are unchanged.
+- Descriptors: 14 alternatives (69 generated in all). The Golden Tee table
+  gains the tournament sets (4 MiB programs; GT 3D v2.11's two-group GROM; the
+  Diamond and Supreme third GROM groups); the bowling sets are built from the
+  Deluxe release. All 14 streams match MAME's loaded regions byte-for-byte and
+  reproduce their MD5s. The Golden Tee "Trackball Orientation" switch is now
+  "Trackball Mount" (Normal/45 Degrees): the MiSTer OSD line was too short to
+  show the old setting text.
+- MAME 0.288 reference runs: a fresh `gt97t243` reports reset tables plus
+  "TOURNAMENT STORAGE FAILURE F8", "TOURNAMENT HARDWARE DISABLE F8" and
+  "PROMO BATTERY RAM FAILURE"; after Start it checks for its modem ("ITS
+  CALL ... CHECKING MODEM", about 50 s, then "NO MODEM FOUND"). With saved
+  NVRAM only "TOURNAMENT HARDWARE DISABLE F8" remains and the game plays.
+  `wcbowl140` behaves the same way.
+- Simulation: new `timekeeper` (23 checks) and `timekeeper-bus` (29 checks)
+  benches; `game-selector` (19 profiles) and the NVRAM benches updated for the
+  wider host address. The full suite passes 102 runs across 53 testbenches;
+  lint reports no new core-side warnings (the unconnected `RTC` pin warning is
+  gone).
+- Quartus Prime Lite 17.0.2 (default seed): worst setup slack `+0.082 ns`
+  (HDMI scaler, slow -40C corner), core clock `+1.094 ns`, worst hold
+  `+0.089 ns`, TNS `0` at all four corners; synthesis reports the same 53
+  warnings. Utilization is 26,357 ALMs, 32,907 registers, 448 RAM blocks (the
+  timekeeper adds four), and 48 DSP blocks. RBF SHA-256:
+  `1C4DC18C52017BA5E44F0C2B7A8B3709B1C7020747F3D36BFCA13C3CE79DFBD8`.
+- Hardware, USB-1 test MiSTer (virtual keyboard and capture card):
+  - Golden Tee '97 Tournament v2.43T: the first run shows MAME's messages
+    except "PROMO BATTERY RAM FAILURE" (MAME fills a fresh timekeeper with
+    0xff; the FPGA RAM starts at zero), then the ITS modem check. Opening the
+    OSD saved a 133120-byte image whose timekeeper part holds the game's
+    tournament data; on reload only "TOURNAMENT HARDWARE DISABLE F8" remains.
+    Attract plays with sound, keys 5 and 1 coin and start, and the arrow keys
+    move the "How many players?" ball. In service mode, the board self-test
+    passes (4 MiB program, palette and video RAM, all GROM and PROM
+    checksums), the Player Controls test lights the trackball arrows from the
+    keys, and the Tournament menu's Display Timers shows the MiSTer date and
+    time (26-11-03 08:38:19, then 08:38:26 seven seconds later).
+  - World Class Bowling Tournament v1.40T: the same first-run sequence, a
+    133120-byte save, only the hardware-disable message on reload, the modem
+    check timing out to attract, and the player-count screen from the keys.
+  This RBF supersedes the Power Up Baseball build.
+
+## Must Shoot TV test build (2026-11-03)
+
+Adds Must Shoot TV (MAME `shoottv`, a prototype light-gun game):
+
+- Selector `13`: the SFTM row with two 1024-row planes, SFTM's colour-latch
+  order, the fixed security-PIC dword `0x00002000`, a 17-page GROM and samples
+  in bank 0, plus two new profile fields: `lightgun` (gun registers at
+  `0x190000`/`0x192000`, interrupt clears at `0x183000` and
+  `0x183800-0x188003`) and `vint_disabled` (MAME's `shoottv_state` drops
+  VINT). `itech32_gun_irq` raises level 5 at lines 0 mod 32 and level 6 at 16
+  mod 32 (MAME `gun_interrupt`).
+- Aiming: `itech32_lightgun` per gun (mouse, stick, d-pad and arrow keys;
+  OSD Light Gun Stick: Relative or Absolute for MiSTer light guns). The mouse's
+  left button is player 1's trigger alongside B1. `itech32_crosshair` draws a
+  red (player 1) and blue (player 2, once moved) cross; it adds only a select
+  to the RGB path, keeping Time Killers' five-clock palette budget. OSD:
+  Crosshair On/Off.
+- A MAME I/O census of the game (4000 frames, coin, start and firing) found
+  only the mapped windows, plus reads at `0x181800`/`0x182000` that MAME and
+  the core both leave unmapped (zero). The game is 384x256, so the gun's X
+  range (`0x1c-0x19b`) and Y range (`0x00-0xff`) are visible pixels.
+- `Must Shoot TV (prototype).mra`: odd-sized program, GROM and sample ROMs,
+  the program region's tail `0xff` (MAME `ROMREGION_ERASEFF`). The stream
+  matches MAME's loaded regions byte-for-byte; MD5
+  `669d0f3b369096c9d9baaca9e79f1fd7`.
+- Simulation: new `lightgun`, `gun-irq`, `crosshair` (every active pixel of
+  four synthetic frames against a reference) and `shoottv-bus` benches;
+  `game-selector` (20 profiles) and `family-inputs` (364 checks) extended. The
+  full suite passes 106 runs across 57 testbenches; lint reports no new
+  core-side warnings.
+- Quartus Prime Lite 17.0.2 (default seed): worst setup slack `+0.301 ns`
+  (HDMI scaler, slow -40C corner), core clock `+1.243 ns`, worst hold
+  `+0.111 ns`, TNS `0` at all four corners; synthesis reports the same 53
+  warnings. Utilization is 26,577 ALMs, 33,045 registers, 448 RAM blocks, and
+  48 DSP blocks. RBF SHA-256:
+  `D448795B7165254DF8F9A354C18D5C945FD8BC67A0B45329570F01763FF93290`.
+- Hardware, USB-1 test MiSTer (virtual keyboard and mouse, capture card): the
+  game boots through MAME's attract sequence with the red crosshair centred;
+  coins and Start come from keys 5 and 1 with sound. The channel guide
+  highlights the row under the crosshair and a shot (Left Ctrl) selects it.
+  In the "High Noonish" stage mouse moves and arrow keys move the crosshair
+  (a 0.25 s Left press about 125 pixels), each shot takes a bullet, and a
+  cowboy under the crosshair falls (an unarmed one, which the game marks with
+  its "NO" penalty). The stage then timed out to the quota screen and Game
+  Over. Player 2's gun was not exercised (one virtual controller).
+  This RBF supersedes the tournament build.
+
 ## Reproduction
 
 Use Quartus Prime Lite 17.0.2 as described in `docs/BUILD.md`. Run the ROM-free

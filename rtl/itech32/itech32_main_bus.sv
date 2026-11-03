@@ -141,22 +141,24 @@ endmodule
 // NVRAM only needs the CPU read/write port. As with the palette RAM, splitting
 // the four byte lanes into independent banks maps the byte enables onto four
 // physical write enables without a read/modify/write data path.
-module itech32_bus_byte_ram_sp (
+module itech32_bus_byte_ram_sp #(
+	parameter int ADDR_W = 15
+) (
 	input  logic        clk,
 	input  logic        write_enable,
-	input  logic [14:0] addr,
+	input  logic [ADDR_W-1:0] addr,
 	input  logic [7:0]  write_data,
 	output logic [7:0]  read_data,
 	// Host writes take the port directly; host reads only once the main bus
 	// has drained, so an accepted CPU access always uses its own address.
 	input  logic        host_owner,
 	input  logic        host_write_enable,
-	input  logic [14:0] host_addr,
+	input  logic [ADDR_W-1:0] host_addr,
 	input  logic [7:0]  host_write_data,
 	output logic [7:0]  host_read_data
 );
-	(* ramstyle = "M10K, no_rw_check" *) logic [7:0] memory [0:32767];
-	wire [14:0] port_a_addr = (host_write_enable || host_owner) ? host_addr : addr;
+	(* ramstyle = "M10K, no_rw_check" *) logic [7:0] memory [0:(1 << ADDR_W) - 1];
+	wire [ADDR_W-1:0] port_a_addr = (host_write_enable || host_owner) ? host_addr : addr;
 
 	always_ff @(posedge clk) begin
 		if (host_write_enable)
@@ -190,17 +192,26 @@ module itech32_main_bus
 	input  logic [31:0] input_p4,
 	input  logic [31:0] input_dips,
 	input  logic [31:0] input_extra,
-	// Trackball ports, (Y << 4) | X, read at 0x680000 and 0x680040.
-	input  logic [7:0]  trackball1,
-	input  logic [7:0]  trackball2,
+	// Trackball position counters, {Y, X}. 4-bit ports read the low nibbles.
+	input  logic [15:0] trackball1,
+	input  logic [15:0] trackball2,
+	// Light-gun aim points in visible pixels, {Y[7:0], X[8:0]}.
+	input  logic [16:0] lightgun1,
+	input  logic [16:0] lightgun2,
 	input  logic        nvram_host_access,
 	input  logic        nvram_host_write,
-	input  logic [16:0] nvram_host_addr,
+	// Byte address: 0x00000-0x1ffff NVRAM, then the timekeeper from 0x20000.
+	input  logic [17:0] nvram_host_addr,
 	input  logic [15:0] nvram_host_wdata,
 	output logic [15:0] nvram_host_rdata,
 	// High once an index-2 transfer owns the RAM read ports (bus drained).
 	output logic        nvram_host_ready,
 	output logic        nvram_cpu_write,
+	// M48T02 clock bytes (offsets 0x7f8-0x7ff, byte i at [8i+7:8i]) and the
+	// CPU's writes to them.
+	input  logic [63:0] timekeeper_clock,
+	output logic [7:0]  timekeeper_write_enable,
+	output logic [63:0] timekeeper_write_data,
 
 	output logic        video_req,
 	output logic        video_we,
@@ -220,6 +231,9 @@ module itech32_main_bus
 	output logic        watchdog_strobe,
 	output logic        vint_ack_strobe,
 	output logic        special_read_strobe,
+	// Reads of the light-gun interrupt clear windows (levels 5 and 6).
+	output logic        gun_ack5,
+	output logic        gun_ack6,
 	output logic        color0_strobe,
 	output logic        color1_strobe,
 	output logic [7:0]  color_data,
@@ -256,6 +270,11 @@ module itech32_main_bus
 	logic        nvram_write_enable;
 	logic        palette_read_pending;
 	logic        nvram_read_pending;
+	logic [31:0] timekeeper_cpu_read_data;
+	logic [31:0] timekeeper_host_read_data;
+	logic        timekeeper_ram_write;
+	logic        timekeeper_host_write;
+	logic        timekeeper_read_pending;
 	logic [13:0] main_ram_read_addr;
 	logic [13:0] main_ram_write_addr;
 	logic [31:0] main_ram_read_data;
@@ -313,7 +332,11 @@ module itech32_main_bus
 		TARGET_SFTM_UNMAPPED,
 		TARGET_EXTRA,
 		TARGET_TRACKBALL,
-		TARGET_PIC_RESULT
+		TARGET_PIC_RESULT,
+		TARGET_PROTECTION_FIXED,
+		TARGET_TIMEKEEPER,
+		TARGET_GUN_ACK,
+		TARGET_LIGHTGUN
 	} bus_target_t;
 	bus_target_t bus_target_q;
 	bus_target_t accept_target;
@@ -325,6 +348,25 @@ module itech32_main_bus
 	wire map_timekill   = profile.memory_map == MAP_TIMEKILL;
 	wire map_bloodstorm = profile.memory_map == MAP_BLOODSTORM;
 	wire map_68000      = map_timekill || map_bloodstorm;
+
+	// Gun register byte: gun 2 at +0x2000; X low byte, X bit 8, Y, zero at
+	// +0x000/+0x800/+0x1000/+0x1800. MAME's X range 0x1c-0x19b spans the
+	// 384 visible columns.
+	wire [16:0] lightgun_selected = bus_addr_q[13] ? lightgun2 : lightgun1;
+	wire [8:0] lightgun_x = lightgun_selected[8:0] + 9'd28;
+	logic [7:0] lightgun_byte;
+	always_comb begin
+		case (bus_addr_q[12:11])
+			2'd0: lightgun_byte = lightgun_x[7:0];
+			2'd1: lightgun_byte = {7'd0, lightgun_x[8]};
+			2'd2: lightgun_byte = lightgun_selected[16:9];
+			default: lightgun_byte = 8'h00;
+		endcase
+	end
+
+	// 4-bit trackball port byte, (Y << 4) | X.
+	wire [7:0] trackball1_port = {trackball1[11:8], trackball1[3:0]};
+	wire [7:0] trackball2_port = {trackball2[11:8], trackball2[3:0]};
 
 	// (a) Retain one complete, immutable ROM response across bus transactions.
 	// This is a board-side response buffer, not a modeled 68020 instruction cache.
@@ -345,7 +387,7 @@ module itech32_main_bus
 	wire rom_buffer_cancel = rom_buffer_invalidate ||
 		(profile.memory_map != rom_buffer_previous_mode_q);
 	wire bus_idle = !bus_pending && !main_ram_read_pending &&
-		!palette_read_pending && !nvram_read_pending;
+		!palette_read_pending && !nvram_read_pending && !timekeeper_read_pending;
 	// runtime_hold stops the CPU from starting new cycles, but the TG68 adapter
 	// still presents a cycle it captured just before an upload began. Leave that
 	// request unaccepted (and unacknowledged) until the transfer has released
@@ -483,12 +525,36 @@ module itech32_main_bus
 				decode_bus_target = TARGET_P2;
 			else if (!write_cycle && address >= 24'h180000 && address <= 24'h180003)
 				decode_bus_target = TARGET_P3;
-			// Shuffleshot/World Class Bowling (MAME init_shuffle_bowl_common).
+			// Must Shoot TV (MAME shoottv_map): reading 0x183000 clears the
+			// guns' level-6 interrupt and 0x183800-0x188003 level 5; the gun
+			// registers are the first dword of each 2 KiB step at 0x190000.
+			else if (!write_cycle && profile.lightgun &&
+				((address >= 24'h183000 && address <= 24'h183003) ||
+				 (address >= 24'h183800 && address <= 24'h188003)))
+				decode_bus_target = TARGET_GUN_ACK;
+			else if (!write_cycle && profile.lightgun &&
+				address >= 24'h190000 && address <= 24'h193803 && address[10:2] == 9'd0)
+				decode_bus_target = TARGET_LIGHTGUN;
+			// Shuffleshot, World Class Bowling and Golden Tee trackballs
+			// (MAME init_shuffle_bowl_common, init_aama, init_s_ver,
+			// init_gt3d, init_gt3dl).
 			else if (!write_cycle && profile.trackball != TRACKBALL_NONE &&
+				profile.trackball_port == TRACKBALL_AT_180800 &&
 				address >= 24'h180800 && address <= 24'h180803)
 				decode_bus_target = TARGET_TRACKBALL;
 			else if (!write_cycle && profile.trackball == TRACKBALL_TWO &&
+				profile.trackball_port == TRACKBALL_AT_180800 &&
 				address >= 24'h181000 && address <= 24'h181003)
+				decode_bus_target = TARGET_TRACKBALL;
+			else if (!write_cycle && profile.trackball != TRACKBALL_NONE &&
+				profile.trackball_port == TRACKBALL_AT_200200 &&
+				address >= 24'h200200 && address <= 24'h200203)
+				decode_bus_target = TARGET_TRACKBALL;
+			// The three-tier Golden Tee 3D boards replace P4 with the ports.
+			else if (!write_cycle && profile.trackball != TRACKBALL_NONE &&
+				(profile.trackball_port == TRACKBALL_AT_200000 ||
+				 profile.trackball_port == TRACKBALL_WIDE) &&
+				address >= 24'h200000 && address <= 24'h200003)
 				decode_bus_target = TARGET_TRACKBALL;
 			else if (!write_cycle && address >= 24'h200000 && address <= 24'h200003)
 				decode_bus_target = TARGET_P4;
@@ -498,12 +564,15 @@ module itech32_main_bus
 				// MAME installs SFTM's handler across this dword with a 000000ff
 				// mask. Decode the full board range; TARGET_COLOR0 gates the actual
 				// latch strictly with BE[0], so +0/+1/+2 have no side effect.
-				decode_bus_target = TARGET_COLOR0;
+				decode_bus_target = profile.color_latch_swap ? TARGET_COLOR1 : TARGET_COLOR0;
 			else if (write_cycle && address >= 24'h380000 && address <= 24'h380003)
-				decode_bus_target = TARGET_COLOR1;
+				decode_bus_target = profile.color_latch_swap ? TARGET_COLOR0 : TARGET_COLOR1;
 			else if (write_cycle && address >= 24'h400000 && address <= 24'h400003)
 				decode_bus_target = TARGET_WATCHDOG;
-			else if (write_cycle && address == 24'h480001)
+			// MAME's byte handler at 0x480001 takes any write that includes that
+			// byte: SFTM and the bowling games write the byte, Golden Tee a word
+			// at 0x480000. TARGET_SOUND_COMMAND gates on byte lane +1 (BE[2]).
+			else if (write_cycle && address >= 24'h480000 && address <= 24'h480003)
 				decode_bus_target = TARGET_SOUND_COMMAND;
 			else if (address >= 24'h500000 && address <= 24'h5000ff)
 				decode_bus_target = TARGET_VIDEO;
@@ -514,10 +583,17 @@ module itech32_main_bus
 				decode_bus_target = TARGET_PALETTE;
 			else if (address >= 24'h600000 && address <= 24'h61ffff)
 				decode_bus_target = TARGET_NVRAM;
+			else if (!write_cycle && profile.protection_fixed &&
+				address >= 24'h680000 && address <= 24'h680003)
+				decode_bus_target = TARGET_PROTECTION_FIXED;
 			else if (!write_cycle && address == 24'h680002)
 				decode_bus_target = TARGET_PROTECTION_READ;
 			else if (address >= 24'h680000 && address <= 24'h68083f)
 				decode_bus_target = TARGET_PROTECTION_RANGE;
+			// Tournament boards (MAME install_timekeeper): an 8-bit device on
+			// every byte lane, so CPU address 0x681000 + n is offset n.
+			else if (profile.timekeeper && address >= 24'h681000 && address <= 24'h6817ff)
+				decode_bus_target = TARGET_TIMEKEEPER;
 			else if (write_cycle && address == 24'h700002)
 				decode_bus_target = TARGET_PLANE;
 			else if (!write_cycle && address >= 24'h800000 && address <= 24'hbfffff)
@@ -714,17 +790,26 @@ module itech32_main_bus
 		bus_target_q == TARGET_NVRAM;
 	// Battery RAM is either the dedicated 128 KiB store or the low
 	// nvram_workram_bytes of work RAM (where every work-RAM write is dirty).
-	wire workram_host_in_range = nvram_host_addr < profile.nvram_workram_bytes;
+	wire workram_host_in_range = nvram_host_addr < {1'b0, profile.nvram_workram_bytes};
 	assign work_ram_host_write = nvram_host_write && !profile.nvram_dedicated &&
 		workram_host_in_range;
-	assign dedicated_nvram_host_write = nvram_host_write && profile.nvram_dedicated;
-	assign nvram_cpu_write = nvram_write_enable ||
+	// The host image continues past the 128 KiB store with the timekeeper's
+	// 2 KiB (byte n at image offset 0x20000 + n).
+	wire timekeeper_host_select = profile.timekeeper && nvram_host_addr[17];
+	assign dedicated_nvram_host_write = nvram_host_write && profile.nvram_dedicated &&
+		!nvram_host_addr[17];
+	assign timekeeper_host_write = nvram_host_write && timekeeper_host_select;
+	assign timekeeper_ram_write = !reset && bus_pending && bus_we_q &&
+		bus_target_q == TARGET_TIMEKEEPER;
+	assign nvram_cpu_write = nvram_write_enable || timekeeper_ram_write ||
 		(main_ram_write_enable && !profile.nvram_dedicated);
+	wire [31:0] dedicated_host_read_data = timekeeper_host_select ?
+		timekeeper_host_read_data : nvram_host_read_data;
 	assign nvram_host_rdata = !profile.nvram_dedicated ?
 		(workram_host_in_range ? work_ram_host_read_data : 16'd0) :
 		(!nvram_host_addr[1] ?
-			{nvram_host_read_data[23:16], nvram_host_read_data[31:24]} :
-			{nvram_host_read_data[7:0], nvram_host_read_data[15:8]});
+			{dedicated_host_read_data[23:16], dedicated_host_read_data[31:24]} :
+			{dedicated_host_read_data[7:0], dedicated_host_read_data[15:8]});
 	itech32_bus_byte_ram_sp nvram_lane0 (
 		.clk(clk), .write_enable(nvram_write_enable && bus_be_q[0]),
 		.addr(bus_addr_q[16:2]), .write_data(bus_wdata_q[7:0]),
@@ -766,12 +851,56 @@ module itech32_main_bus
 		.host_read_data(nvram_host_read_data[31:24])
 	);
 
+	// Timekeeper battery RAM, offsets 0x000-0x7ff in four byte lanes with the
+	// NVRAM's host byte order. The clock bytes at 0x7f8-0x7ff are also written
+	// here (MAME keeps them in its RAM image) but read from timekeeper_clock.
+	genvar timekeeper_lane;
+	generate
+		for (timekeeper_lane = 0; timekeeper_lane < 4; timekeeper_lane++) begin : timekeeper_ram
+			itech32_bus_byte_ram_sp #(.ADDR_W(9)) lane (
+				.clk(clk),
+				.write_enable(timekeeper_ram_write && bus_be_q[timekeeper_lane]),
+				.addr(bus_addr_q[10:2]),
+				.write_data(bus_wdata_q[8 * timekeeper_lane +: 8]),
+				.read_data(timekeeper_cpu_read_data[8 * timekeeper_lane +: 8]),
+				.host_owner(nvram_host_owner_q),
+				.host_write_enable(timekeeper_host_write &&
+					(nvram_host_addr[1] == (timekeeper_lane < 2))),
+				.host_addr(nvram_host_addr[10:2]),
+				.host_write_data((timekeeper_lane % 2 == 1) ? nvram_host_wdata[7:0] :
+					nvram_host_wdata[15:8]),
+				.host_read_data(timekeeper_host_read_data[8 * timekeeper_lane +: 8])
+			);
+		end
+	endgenerate
+
+	// Offsets 0x7f8-0x7fb (dword 0x6817f8) and 0x7fc-0x7ff (0x6817fc) are the
+	// clock: offset +k of the dword is byte lane 3 - k.
+	wire timekeeper_clock_dword = bus_addr_q[10:3] == 8'hff;
+	always_comb begin
+		for (int k = 0; k < 4; k++) begin
+			timekeeper_write_enable[k] = timekeeper_ram_write && timekeeper_clock_dword &&
+				!bus_addr_q[2] && bus_be_q[3 - k];
+			timekeeper_write_enable[4 + k] = timekeeper_ram_write && timekeeper_clock_dword &&
+				bus_addr_q[2] && bus_be_q[3 - k];
+			timekeeper_write_data[8 * k +: 8] = bus_wdata_q[8 * (3 - k) +: 8];
+			timekeeper_write_data[8 * (4 + k) +: 8] = bus_wdata_q[8 * (3 - k) +: 8];
+		end
+	end
+	wire [31:0] timekeeper_clock_read = bus_addr_q[2] ?
+		{timekeeper_clock[39:32], timekeeper_clock[47:40], timekeeper_clock[55:48],
+		 timekeeper_clock[63:56]} :
+		{timekeeper_clock[7:0], timekeeper_clock[15:8], timekeeper_clock[23:16],
+		 timekeeper_clock[31:24]};
+
 	always_ff @(posedge clk) begin
 		cpu_ack             <= 1'b0;
 		video_req           <= 1'b0;
 		rom_req             <= 1'b0;
 		sound_command_valid <= 1'b0;
 		watchdog_strobe     <= 1'b0;
+		gun_ack5            <= 1'b0;
+		gun_ack6            <= 1'b0;
 		vint_ack_strobe      <= 1'b0;
 		special_read_strobe <= 1'b0;
 		color0_strobe       <= 1'b0;
@@ -801,6 +930,7 @@ module itech32_main_bus
 			main_ram_protection_lane    <= 2'd0;
 			palette_read_pending         <= 1'b0;
 			nvram_read_pending           <= 1'b0;
+			timekeeper_read_pending      <= 1'b0;
 			bus_held                     <= 1'b0;
 			bus_pending                  <= 1'b0;
 			bus_we_q                     <= 1'b0;
@@ -860,6 +990,11 @@ module itech32_main_bus
 				cpu_rdata <= nvram_cpu_read_data;
 				cpu_ack <= 1'b1;
 				nvram_read_pending <= 1'b0;
+			end else if (timekeeper_read_pending) begin
+				cpu_rdata <= timekeeper_clock_dword ? timekeeper_clock_read :
+					timekeeper_cpu_read_data;
+				cpu_ack <= 1'b1;
+				timekeeper_read_pending <= 1'b0;
 			end else if (bus_pending) begin
 				cpu_rdata <= 32'hffff_ffff;
 
@@ -977,7 +1112,7 @@ module itech32_main_bus
 						bus_pending <= 1'b0;
 					end
 					TARGET_SOUND_COMMAND: begin
-						sound_command_valid <= !map_bloodstorm || bus_be_q[2];
+						sound_command_valid <= map_timekill || bus_be_q[2];
 						sound_command <= bus_addr_q[1] ?
 							bus_wdata_q[7:0] : bus_wdata_q[23:16];
 						cpu_ack <= 1'b1;
@@ -1015,6 +1150,13 @@ module itech32_main_bus
 						else
 							nvram_read_pending <= 1'b1;
 					end
+					TARGET_TIMEKEEPER: begin
+						bus_pending <= 1'b0;
+						if (bus_we_q)
+							cpu_ack <= 1'b1;
+						else
+							timekeeper_read_pending <= 1'b1;
+					end
 					TARGET_PROTECTION_READ, TARGET_PIC_RESULT: begin
 						bus_pending <= 1'b0;
 						main_ram_read_pending <= 1'b1;
@@ -1024,12 +1166,40 @@ module itech32_main_bus
 					end
 					TARGET_TRACKBALL: begin
 						// bloodstm: the low byte of 0x680000 (second ball 0x680040).
-						// itech020: bytes 1 and 3 of 0x180800 (second 0x181000).
+						// itech020: bytes 1 and 3 of 0x180800 (second 0x181000) or
+						// of 0x200200; gt3dl packs both balls into 0x200000, and
+						// gt3d returns 8-bit counters in its low word.
 						if (map_68000)
-							cpu_rdata <= {8'h00, bus_addr_q[6] ? trackball2 : trackball1,
-								16'h0000};
+							cpu_rdata <= {8'h00, bus_addr_q[6] ? trackball2_port :
+								trackball1_port, 16'h0000};
+						else if (profile.trackball_port == TRACKBALL_AT_200000)
+							cpu_rdata <= {2{trackball2_port, trackball1_port}};
+						else if (profile.trackball_port == TRACKBALL_WIDE)
+							cpu_rdata <= {16'h0000, trackball1};
 						else
-							cpu_rdata <= {2{8'h00, bus_addr_q[12] ? trackball2 : trackball1}};
+							cpu_rdata <= {2{8'h00, bus_addr_q[12] ? trackball2_port :
+								trackball1_port}};
+						cpu_ack <= 1'b1;
+						bus_pending <= 1'b0;
+					end
+					TARGET_PROTECTION_FIXED: begin
+						cpu_rdata <= profile.protection_fixed_data;
+						cpu_ack <= 1'b1;
+						bus_pending <= 1'b0;
+					end
+					TARGET_GUN_ACK: begin
+						// 0x183000 (bits 16:2 = 0xc00) is level 6; the rest
+						// of the windows level 5. Both read zero.
+						if (bus_addr_q[16:2] == 15'h0c00)
+							gun_ack6 <= 1'b1;
+						else
+							gun_ack5 <= 1'b1;
+						cpu_rdata <= 32'h0000_0000;
+						cpu_ack <= 1'b1;
+						bus_pending <= 1'b0;
+					end
+					TARGET_LIGHTGUN: begin
+						cpu_rdata <= {8'h00, lightgun_byte, 16'h0000};
 						cpu_ack <= 1'b1;
 						bus_pending <= 1'b0;
 					end
@@ -1047,7 +1217,7 @@ module itech32_main_bus
 						end else begin
 							plane_enable[0] <= ~bus_wdata_q[9];
 							plane_enable[1] <= ~bus_wdata_q[10];
-							grom_bank <= bus_wdata_q[15:14];
+							grom_bank <= profile.grom_banked ? bus_wdata_q[15:14] : 2'b00;
 						end
 						cpu_ack <= 1'b1;
 						bus_pending <= 1'b0;
@@ -1088,7 +1258,7 @@ module itech32_main_bus
 		if (nvram_host_owner_q) begin
 			assert (bus_idle && !bus_accept)
 				else $fatal(1, "CPU access in flight while NVRAM host owns RAM");
-			assert (!main_ram_write_enable && !nvram_write_enable)
+			assert (!main_ram_write_enable && !nvram_write_enable && !timekeeper_ram_write)
 				else $fatal(1, "CPU RAM write while NVRAM host owns RAM");
 		end
 	end
