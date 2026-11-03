@@ -483,6 +483,13 @@ module itech32_main_bus
 				decode_bus_target = TARGET_P2;
 			else if (!write_cycle && address >= 24'h180000 && address <= 24'h180003)
 				decode_bus_target = TARGET_P3;
+			// Shuffleshot/World Class Bowling (MAME init_shuffle_bowl_common).
+			else if (!write_cycle && profile.trackball != TRACKBALL_NONE &&
+				address >= 24'h180800 && address <= 24'h180803)
+				decode_bus_target = TARGET_TRACKBALL;
+			else if (!write_cycle && profile.trackball == TRACKBALL_TWO &&
+				address >= 24'h181000 && address <= 24'h181003)
+				decode_bus_target = TARGET_TRACKBALL;
 			else if (!write_cycle && address >= 24'h200000 && address <= 24'h200003)
 				decode_bus_target = TARGET_P4;
 			else if (!write_cycle && address >= 24'h280000 && address <= 24'h280003)
@@ -1016,9 +1023,13 @@ module itech32_main_bus
 						main_ram_protection_lane <= profile.protection_address[1:0];
 					end
 					TARGET_TRACKBALL: begin
-						// Low byte of the 16-bit port; 0x680040 is the second.
-						cpu_rdata <= {8'h00, bus_addr_q[6] ? trackball2 : trackball1,
-							16'h0000};
+						// bloodstm: the low byte of 0x680000 (second ball 0x680040).
+						// itech020: bytes 1 and 3 of 0x180800 (second 0x181000).
+						if (map_68000)
+							cpu_rdata <= {8'h00, bus_addr_q[6] ? trackball2 : trackball1,
+								16'h0000};
+						else
+							cpu_rdata <= {2{8'h00, bus_addr_q[12] ? trackball2 : trackball1}};
 						cpu_ack <= 1'b1;
 						bus_pending <= 1'b0;
 					end

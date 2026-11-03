@@ -201,6 +201,19 @@ module itech32_inputs
 						~joystick_1_q[7], ~joystick_0_q[7], ~joystick_1_q[5], ~joystick_0_q[5]};
 				end
 			endcase
+		end else if (profile.input_layout == INPUTS_SHUFFLE_BOWL) begin
+			// 68EC020 Shuffleshot/World Class Bowling: Zoom/Wax or Hook
+			// Left/Right on B1/B2, bits 4..7 unused (the d-pad drives the
+			// trackball); P3 holds only an unmapped third coin. DIPS and P4
+			// follow the SFTM board.
+			input_p1[23:16] = player_16bit({joystick_0_q[11:4], 4'd0},
+				joystick_0_q[5], joystick_0_q[11]);
+			input_p2[23:16] = player_16bit({joystick_1_q[11:4], 4'd0},
+				joystick_1_q[5], joystick_1_q[11]);
+			input_p3[23:16] = 8'hff;
+			input_p4[23:16] = 8'hff;
+			input_dips[23:16] = {dip_switches[3:0], ~sound_special,
+				~vblank, 1'b1, ~service_button};
 		end else begin
 			input_p1[16] = ~joystick_0_q[11];
 			input_p1[17] = ~joystick_0_q[10];

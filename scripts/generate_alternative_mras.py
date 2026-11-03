@@ -414,8 +414,13 @@ WCBOWL_SPECS = (
 )
 
 
+# The 68000 World Class Bowling template is a hand-written alternative: MAME's
+# parent (v1.66) runs on the 68EC020 board and is the release descriptor.
+WCBOWL_68000_TEMPLATE = OUTPUT / "_World Class Bowling" / f"{WCBOWL_PARENT[0]}.mra"
+
+
 def generate_wcbowl() -> list[Path]:
-    template = (RELEASES / f"{WCBOWL_PARENT[0]}.mra").read_text(encoding="utf-8")
+    template = WCBOWL_68000_TEMPLATE.read_text(encoding="utf-8")
     written = []
     for setname, title, program, early_sound, japan, md5 in WCBOWL_SPECS:
         parent_title, parent_set, parent_zip, parent_md5 = WCBOWL_PARENT
@@ -461,12 +466,140 @@ def generate_wcbowl() -> list[Path]:
     return written
 
 
+def program32(parts: tuple[tuple[str, str], ...]) -> str:
+    maps = ("0001", "0010", "0100", "1000")
+    return "\n".join(
+        f'            <part name="{name}" crc="{crc}" map="{mapping}" />'
+        for (name, crc), mapping in zip(parts, maps)
+    )
+
+
+def retitle_020(template: str, parent: tuple[str, str, str, str], setname: str, title: str,
+                md5: str) -> str:
+    parent_title, parent_set, parent_zip, parent_md5 = parent
+    text = replace_once(template, f"<name>{parent_title}</name>", f"<name>{title}</name>", setname)
+    text = replace_once(text, f"<setname>{parent_set}</setname>",
+                        f"<setname>{setname}</setname>", setname)
+    return replace_once(
+        text,
+        f'zip="{parent_zip}" address="0x30000000" md5="{parent_md5}"',
+        f'zip="{setname}.zip|{parent_set}.zip" address="0x30000000" md5="{md5}"',
+        setname,
+    )
+
+
+# MAME's earlier 68EC020 revisions use Flip Screen on SW1:3 instead of Cabinet,
+# and Freeze Screen on SW1:2 (wcbowlo and shufshto input ports).
+CABINET_DIP = '        <dip name="Cabinet" bits="1" ids="Upright,Cocktail" />'
+FLIP_DIP = '        <dip name="Flip Screen" bits="1" ids="Off,On" />'
+FREEZE_DIP = '        <dip name="Freeze Screen" bits="2" ids="Off,On" />'
+
+WCBOWL020_PARENT = ("World Class Bowling (v1.66)", "wcbowl", "wcbowl.zip",
+                    "f883f69e59c49365dc07ae9a1cda809e")
+WCBOWL020_PROGRAM = (("wcb_prom0_v1.66n.prom0", "f6774112"), ("wcb_prom1_v1.66n.prom1", "931821ae"),
+                     ("wcb_prom2_v1.66n.prom2", "c54f5e40"), ("wcb_prom3_v1.66n.prom3", "dd72c796"))
+# setname, title, program, earlier sound program (None keeps v4.01 and the
+# "_s" sample ROMs), MD5.
+WCBOWL020_SPECS = (
+    ("wcbowl165", "World Class Bowling (v1.65)",
+     (("wcb_prom0_v1.65n.prom0", "cf0f6c25"), ("wcb_prom1_v1.65n.prom1", "076ab158"),
+      ("wcb_prom2_v1.65n.prom2", "47259009"), ("wcb_prom3_v1.65n.prom3", "4c6b4e4f")),
+     None, "da5703a2fdd35eb0353711bfb43feda9"),
+    ("wcbowl161", "World Class Bowling (v1.61)",
+     (("wcb_prom0_v1.61n.prom0", "b879d4a7"), ("wcb_prom1_v1.61n.prom1", "49f3ed6a"),
+      ("wcb_prom2_v1.61n.prom2", "47259009"), ("wcb_prom3_v1.61n.prom3", "e5081f85")),
+     ("wcbsnd_u88_v4.0.u88", "194a51d7"), "0f3c0ca9f5fb557b7893f7fae017232f"),
+    ("wcbowl16", "World Class Bowling (v1.6)",
+     (("wcb_prom0_v1.6n.prom0", "332c558f"), ("wcb_prom1_v1.6n.prom1", "c5750857"),
+      ("wcb_prom2_v1.6n.prom2", "28f4ee8a"), ("wcb_prom3_v1.6n.prom3", "f0a58979")),
+     ("wcbsnd_u88_v3.0n.u88", "45c4f659"), "41ffd945703d2a4d00b24b36c3199af1"),
+)
+
+# v1.61 and v1.6 carry the original sample ROMs; their srom3 is half size.
+WCBOWL020_SAMPLES_ORIGINAL = (
+    ('<part name="wcb_srom0_s.srom0" crc="d42dd283" map="01" />',
+     '<part name="wcb_srom0.srom0" crc="c3821cb5" map="01" />'),
+    ('<part name="wcb_srom1_s.srom1" crc="7a69ab54" map="01" />',
+     '<part name="wcb_srom1.srom1" crc="37bfa3c7" map="01" />'),
+    ('<part name="wcb_srom2_s.srom2" crc="346530a2" map="01" />',
+     '<part name="wcb_srom2.srom2" crc="f82c08fd" map="01" />'),
+    ('            <part name="wcb_srom3_s.srom3" crc="1dfe3a31" map="01" />\n'
+     '            <part map="10" repeat="0x40000">00</part>\n'
+     '        </interleave>\n'
+     '        <part repeat="0x180000">00</part>',
+     '            <part name="wcb_srom3.srom3" crc="1c2efdee" map="01" />\n'
+     '            <part map="10" repeat="0x20000">00</part>\n'
+     '        </interleave>\n'
+     '        <part repeat="0x1c0000">00</part>'),
+)
+
+
+def generate_wcbowl_020() -> list[Path]:
+    template = (RELEASES / f"{WCBOWL020_PARENT[0]}.mra").read_text(encoding="utf-8")
+    written = []
+    for setname, title, program, sound, md5 in WCBOWL020_SPECS:
+        text = retitle_020(template, WCBOWL020_PARENT, setname, title, md5)
+        text = replace_once(text, program32(WCBOWL020_PROGRAM), program32(program), setname)
+        text = replace_once(text, CABINET_DIP, FLIP_DIP, setname)
+        if sound:
+            text = replace_once(text, bloodstm_sound("wcbsnd_u88_4.01.u88", "e97a6d28"),
+                                bloodstm_sound(*sound), setname)
+            for old, new in WCBOWL020_SAMPLES_ORIGINAL:
+                text = replace_once(text, old, new, setname)
+        written.append(write_alternative("World Class Bowling", f"{title}.mra", text))
+    return written
+
+
+SHUFSHOT_PARENT = ("Shuffleshot (v1.40)", "shufshot", "shufshot.zip",
+                   "7fb2a2cf384027ad4ac11e0f3e8dee92")
+SHUFSHOT_PROGRAM = (("shot_prom0_v1.40.prom0", "33c0c98b"), ("shot_prom1_v1.40.prom1", "d30a8831"),
+                    ("shot_prom2_v1.40.prom2", "ea10ada8"), ("shot_prom3_v1.40.prom3", "4b28f28b"))
+SHUFSHOT_GROM3 = (("shfa_grom3_0.grm3_0", "c5afc9d1"), ("shfa_grom3_1.grm3_1", "70dd7b68"),
+                  ("shfa_grom3_2.grm3_2", "da56512d"), ("shfa_grom3_3.grm3_3", "21727c50"))
+SHUFSHOT_GROM3_OLD = (("shf_grom3_0.grm3_0", "a29763db"), ("shf_grom3_1.grm3_1", "c757084c"),
+                      ("shf_grom3_2.grm3_2", "2971cb25"), ("shf_grom3_3.grm3_3", "4fcbee51"))
+# setname, title, program, earlier GROM3, earlier DIP layout (shufshto), MD5.
+SHUFSHOT_SPECS = (
+    ("shufshot139", "Shuffleshot (v1.39)",
+     (("shot_prom0_v1.39.prom0", "e811fc4a"), ("shot_prom1_v1.39.prom1", "f9d120c5"),
+      ("shot_prom2_v1.39.prom2", "9f12414d"), ("shot_prom3_v1.39.prom3", "108a69be")),
+     False, False, "1410e243a7e8ec3968e62cf45589b360"),
+    ("shufshot138", "Shuffleshot (v1.38)",
+     (("shot_prom0_v1.38.prom0", "68f823ff"), ("shot_prom1_v1.38.prom1", "bdd9a8e9"),
+      ("shot_prom2_v1.38.prom2", "92008e13"), ("shot_prom3_v1.38.prom3", "723cb9a5")),
+     False, True, "347efcebcd6089d15dcfa57fafd60939"),
+    ("shufshot137", "Shuffleshot (v1.37)",
+     (("shot_prom0_v1.37.prom0", "6499c76f"), ("shot_prom1_v1.37.prom1", "64fb47a4"),
+      ("shot_prom2_v1.37.prom2", "e0df3025"), ("shot_prom3_v1.37.prom3", "efa66ad8")),
+     True, True, "6075411ee3a5399655107be2884f16a3"),
+    ("shufshot135", "Shuffleshot (v1.35)",
+     (("shot_prom0_v1.35.prom0", "1a1d510c"), ("shot_prom1_v1.35.prom1", "5d7d5017"),
+      ("shot_prom2_v1.35.prom2", "6f27b111"), ("shot_prom3_v1.35.prom3", "bf6fabbb")),
+     True, False, "ad2a9b239d3367414b51ebd681819146"),
+)
+
+
+def generate_shufshot() -> list[Path]:
+    template = (RELEASES / f"{SHUFSHOT_PARENT[0]}.mra").read_text(encoding="utf-8")
+    written = []
+    for setname, title, program, old_grom3, old_dips, md5 in SHUFSHOT_SPECS:
+        text = retitle_020(template, SHUFSHOT_PARENT, setname, title, md5)
+        text = replace_once(text, program32(SHUFSHOT_PROGRAM), program32(program), setname)
+        if old_grom3:
+            text = replace_once(text, program32(SHUFSHOT_GROM3), program32(SHUFSHOT_GROM3_OLD),
+                                setname)
+        if old_dips:
+            text = replace_once(text, CABINET_DIP, FLIP_DIP + "\n" + FREEZE_DIP, setname)
+        written.append(write_alternative("Shuffleshot", f"{title}.mra", text))
+    return written
+
+
 def main() -> int:
     OUTPUT.mkdir(parents=True, exist_ok=True)
     written = (generate_timekill() + generate_bloodstorm() + generate_sftm() +
                generate_hardyard() + generate_pairs() + generate_hotmemry() +
-               generate_wcbowl())
-    expected = {path.resolve() for path in written}
+               generate_wcbowl() + generate_wcbowl_020() + generate_shufshot())
+    expected = {path.resolve() for path in written} | {WCBOWL_68000_TEMPLATE.resolve()}
     actual = {path.resolve() for path in OUTPUT.rglob("*.mra")}
     if actual != expected:
         unexpected = sorted(str(path.relative_to(ROOT)) for path in actual - expected)

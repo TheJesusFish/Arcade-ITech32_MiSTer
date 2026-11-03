@@ -8,10 +8,10 @@ build trees are intentionally not part of this repository.
 
 - Street Fighter: The Movie v1.12, Time Killers v1.32, and BloodStorm v2.22
   share one production core and have release MRAs under `releases/`. Hard
-  Yardage, Pairs, Hot Memory, Pairs Redemption, and World Class Bowling were
-  added on 2026-11-02 and await hardware testing (see "Phase-1 games test build"
-  and "World Class Bowling test build").
-- Twenty-seven compatible revisions of those games have checksum-pinned MRAs under
+  Yardage, Pairs, Hot Memory, Pairs Redemption, World Class Bowling, World
+  Class Bowling Deluxe, and Shuffleshot were added on 2026-11-02 and await
+  hardware testing (see the three 2026-11-02 test-build sections).
+- Thirty-five compatible revisions of those games have checksum-pinned MRAs under
   `releases/alternatives/`. Every SFTM revision uses the hardware-qualified
   selector `00` and `0x7a6a` protection address. See
   `docs/CLONE_SUPPORT.md` for the complete inventory, reproduction commands,
@@ -359,6 +359,40 @@ Adds the 68000 World Class Bowling sets, the first trackball game:
   32,525 registers, 444 RAM blocks, 48 DSP blocks, and 3 of 6 PLLs. RBF SHA-256:
   `533BE1C9F7B78B2A03F5A89DA961BE8352450379E79A501C8E2C71A607FD9834`.
 - Not yet hardware-tested. This RBF supersedes the phase-1 test build.
+
+## 68EC020 trackball games test build (2026-11-02)
+
+Adds the trackball games on the SFTM board (MAME `sftm` machine with
+`init_shuffle_bowl_common`):
+
+- World Class Bowling v1.66 (`wcbowl`, selector `07`; now the release
+  descriptor) with alternatives v1.65, v1.61, and v1.6; World Class Bowling
+  Deluxe v2.00 (`wcbowldx`, `08`); Shuffleshot v1.40 (`shufshot`, `09`) with
+  alternatives v1.39, v1.38, v1.37, and v1.35. The 68000 v1.5 descriptor moved
+  to `_World Class Bowling`.
+- Board additions: trackball ports at `0x180800`/`0x181000` with the byte in
+  both halves of the 32-bit word, the itech020 protection byte at `0x1116`
+  (v1.6x) or `0x111a`, a six-bank sound ROM, samples in ES5506 banks 0 and 1,
+  and a 16-page GROM for Shuffleshot. Buttons follow MAME: Hook Left/Right for
+  bowling, Zoom/Wax for Shuffleshot.
+- MAME 0.288 measurements decided the design: both families read the trackball
+  in eight pairs per frame (longest gap about 3.8 ms), so the existing 1600 Hz
+  release needs no change. Neither touches the serial DUART at `0x680800`; both
+  read the zero-reading `0x578000` window; Shuffleshot probes the absent
+  tournament timekeeper at `0x681000-0x6817ff`, which reads zero here as in MAME.
+- All ten new ROM streams match MAME's loaded regions byte-for-byte; the full
+  release set of 45 descriptors reproduces its MD5s.
+- Simulation: `game-selector`, `wcbowl-bus`, and `family-inputs` extended (both
+  trackball maps, both protection addresses, the new input layout, SFTM
+  unchanged). The full suite passes 97 runs across 48 testbenches; four planted
+  mutations were each rejected. Lint reports no new core-side warnings.
+- Quartus Prime Lite 17.0.2 (default seed): worst setup slack `+0.281 ns` (HDMI
+  scaler), core clock `+0.861 ns` (worst paths inside the TG68 ALU), worst hold
+  `+0.116 ns`, TNS `0` at all four corners; post-fit HDMI check reports
+  physical C5. Utilization is 25,789 ALMs, 32,542 registers, 444 RAM blocks,
+  48 DSP blocks, and 3 of 6 PLLs. RBF SHA-256:
+  `7B423347EEB9DAE8E758E67AC8466E3E3DA183ED264699C93DC908C5F9038548`.
+- Not yet hardware-tested. This RBF supersedes the World Class Bowling build.
 
 ## Reproduction
 

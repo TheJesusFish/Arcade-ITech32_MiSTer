@@ -58,7 +58,12 @@ v1.0-1.5, `06` World Class Bowling v1.3J. `03`-`06` share BloodStorm's row
 and `06` also take MAME `init_wcbowl`'s ROM-board additions: a trackball port at
 `0x680000` (and `0x680040` on v1.3J), the security PIC result at `0x680080`
 (MAME's model: the work-RAM word at `protection_address` `0x111c`), and zero
-reads from `0x578000-0x57ffff`.
+reads from `0x578000-0x57ffff`. `07` World Class Bowling v1.6-1.66, `08` World
+Class Bowling Deluxe, and `09` Shuffleshot use the SFTM row (MAME's `sftm`
+machine) with `init_shuffle_bowl_common`'s two trackball ports at `0x180800` and
+`0x181000`, a six-bank sound ROM, samples in ES5506 banks 0 and 1, and the
+itech020 protection byte at `0x1116` (v1.6x) or `0x111a`; Shuffleshot's
+graphics ROM is 16 pages.
 
 ### Trackballs
 
@@ -69,8 +74,12 @@ stick, or the d-pad add movement to a saturating accumulator in 1/16 counts,
 scaled by the OSD Trackball Speed (25% matches MAME's default sensitivity). One
 count is released per 1600 Hz tick. That rate comes from a measurement: in MAME
 0.288, World Class Bowling reads the port in eight pairs per frame with a
-longest gap of about 3.5 ms (3.8 ms at this core's frame rate), and a 4-bit
-counter aliases beyond seven counts between reads. Orientation follows MAME's
+longest gap of about 3.5 ms (3.8 ms at this core's frame rate); the 68EC020
+bowling and Shuffleshot sets show the same pattern with a 3.8 ms gap. A 4-bit
+counter aliases beyond seven counts between reads, and 1600 Hz keeps any gap
+under 4.375 ms within seven. MAME's 68EC020 handler instead clamps each read to
++-7 counts and holds its value for one scanline; at these read rates both give
+the same result. Orientation follows MAME's
 ports: X is reversed and Y falls as the ball rolls forward. Main_MiSTer sends
 PS/2 packets with +Y forward. Mouse packets are discarded while the OSD is
 open.

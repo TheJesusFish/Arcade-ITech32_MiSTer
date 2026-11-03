@@ -17,7 +17,7 @@ module itech32_bloodstm_family_inputs_tb;
     logic [24:0] ps2_mouse = 0;
     logic mouse_ignore = 0;
     logic [1:0] trackball_speed = 2'd2;
-    logic [7:0] trackball1, trackball2;
+    logic [7:0] trackball1, trackball2, tb2_before;
     logic [7:0] selector = SELECT_HARDYARD;
     board_profile_t profile;
     integer checks = 0;
@@ -194,8 +194,35 @@ module itech32_bloodstm_family_inputs_tb;
         if (trackball1 !== 8'hfe) $fatal(1, "FAMILY_INPUTS_TB_DISABLED tb1=%02x", trackball1);
         checks++;
 
-        if (checks != 247) $fatal(1, "FAMILY_INPUTS_CASE_COUNT %0d", checks);
-        $display("FAMILY_INPUTS_PASS checks=%0d layouts=3", checks);
+        // 68EC020 Shuffleshot/World Class Bowling (MAME shufshot/wcbowln ports):
+        // 32-bit ports with the byte in bits 23:16; B1/B2 only; P3 holds an
+        // unmapped coin (0xff); DIPS in SFTM form (special active low).
+        @(negedge clk); #1; release_all(); selector = SELECT_SHUFSHOT;
+        @(posedge clk); #1;
+        expected("SHUFFLE_IDLE", 8'hff, 8'hff, 8'hff, 8'hff, 8'h00, 8'h0f);
+        for (integer player = 0; player < 2; player++) for (integer button = 0; button < 12; button++) begin
+            @(negedge clk); #1; press(player, 12'(1 << button));
+            @(posedge clk); #1;
+            expected("SHUFFLE_PRESS",
+                player == 0 ? wcbowl_byte(button) : 8'hff,
+                player == 1 ? wcbowl_byte(button) : 8'hff, 8'hff, 8'hff, 8'h00, 8'h0f);
+            @(negedge clk); #1; release_all();
+        end
+        @(posedge clk); #1;
+        dip_switches = 8'h05; sound_special = 1; vblank = 1; #1;
+        expected("SHUFFLE_SYSTEM", 8'hff, 8'hff, 8'hff, 8'hff, 8'h00, 8'h53);
+        dip_switches = 0; sound_special = 0; vblank = 0;
+        // Both trackballs are live: player 2's stick toward the player moves
+        // only the second ball's Y (counters held their value while disabled).
+        tb2_before = trackball2;
+        analog_1 = 16'h4000; repeat (45) @(negedge clk);
+        if (trackball2[3:0] !== tb2_before[3:0] || trackball2[7:4] == tb2_before[7:4])
+            $fatal(1, "FAMILY_INPUTS_SHUFFLE_TB2 tb2=%02x before=%02x", trackball2, tb2_before);
+        checks++;
+        analog_1 = 0;
+
+        if (checks != 274) $fatal(1, "FAMILY_INPUTS_CASE_COUNT %0d", checks);
+        $display("FAMILY_INPUTS_PASS checks=%0d layouts=4", checks);
         $finish;
     end
 endmodule

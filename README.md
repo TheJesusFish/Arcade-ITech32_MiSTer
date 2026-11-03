@@ -3,8 +3,9 @@
 This is a vibe coded, MAME-based Incredible Technologies ITech32 arcade core
 for the MiSTer FPGA. It currently supports the 68000-based Time Killers and
 BloodStorm boards (BloodStorm's board also runs Hard Yardage, Pairs, Hot Memory,
-Pairs Redemption, and the trackball game World Class Bowling) and the 68EC020-based
-Street Fighter: The Movie board.
+Pairs Redemption, and the early trackball versions of World Class Bowling) and the
+68EC020-based Street Fighter: The Movie board (which also runs the later World
+Class Bowling versions, World Class Bowling Deluxe, and Shuffleshot).
 
 **This core is vibe coded based on MAME. Its built binaries and MRAs live in
 the [Slop Core Repo](https://github.com/TheJesusFish/Slop-Core).**
@@ -38,15 +39,18 @@ analog characteristics.
 | Pairs | 1.2 | `pairs` |
 | Hot Memory | 1.2 (Germany) | `hotmemry` |
 | Pairs Redemption | 1.0 | `pairsred` |
-| World Class Bowling | 1.5 | `wcbowl15` |
+| World Class Bowling | 1.66 | `wcbowl` |
+| World Class Bowling Deluxe | 2.00 | `wcbowldx` |
+| Shuffleshot | 1.40 | `shufshot` |
 
-Hard Yardage, the Pairs family, and World Class Bowling are new and not yet
-hardware-tested; see [`docs/STATUS.md`](docs/STATUS.md). Hard Yardage supports four
-players. World Class Bowling's trackball is played with a USB mouse or trackball,
-the left analog stick, or the d-pad; the OSD's Trackball Speed sets the gain.
+Hard Yardage, the Pairs family, World Class Bowling, and Shuffleshot are new and
+not yet hardware-tested; see [`docs/STATUS.md`](docs/STATUS.md). Hard Yardage
+supports four players. The trackball games are played with a USB mouse or
+trackball, the left analog stick, or the d-pad; the OSD's Trackball Speed sets
+the gain.
 
 The games share one `Arcade-ITech32.rbf`. Their MRA descriptors are in
-[`releases/`](releases/). Twenty-seven supported earlier and regional revisions are
+[`releases/`](releases/). Thirty-five supported earlier and regional revisions are
 provided in [`releases/alternatives/`](releases/alternatives/); the exact support
 boundary and validation status are recorded in
 [`docs/CLONE_SUPPORT.md`](docs/CLONE_SUPPORT.md). Game ROMs are not included.

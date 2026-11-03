@@ -20,6 +20,9 @@ package itech32_profile_pkg;
 	localparam logic [7:0] SELECT_PAIRS      = 8'h04; // also Hot Memory, Pairs Redemption
 	localparam logic [7:0] SELECT_WCBOWL     = 8'h05; // World Class Bowling v1.0-1.5
 	localparam logic [7:0] SELECT_WCBOWL_J   = 8'h06; // World Class Bowling v1.3J
+	localparam logic [7:0] SELECT_WCBOWL_020 = 8'h07; // World Class Bowling v1.6-1.66
+	localparam logic [7:0] SELECT_WCBOWL_DX  = 8'h08; // World Class Bowling Deluxe
+	localparam logic [7:0] SELECT_SHUFSHOT   = 8'h09; // Shuffleshot
 
 	// Main-CPU address map (MAME: itech020_map, timekill_map, bloodstm_map).
 	localparam logic [1:0] MAP_ITECH020   = 2'd0;
@@ -33,9 +36,11 @@ package itech32_profile_pkg;
 	localparam logic [2:0] INPUTS_HARDYARD   = 3'd3; // four players on P1..P4
 	localparam logic [2:0] INPUTS_PAIRS      = 3'd4; // one button per player
 	localparam logic [2:0] INPUTS_WCBOWL     = 3'd5; // two hook buttons, no joystick
+	localparam logic [2:0] INPUTS_SHUFFLE_BOWL = 3'd6; // 32-bit ports, two buttons
 
 	// Trackball ports: two 4-bit position counters per trackball, read as
-	// (Y << 4) | X in the low byte of 0x680000, and of 0x680040 for a second.
+	// (Y << 4) | X. bloodstm map: the low byte of 0x680000 (second ball
+	// 0x680040). itech020 map: bytes 1 and 3 of 0x180800 (second 0x181000).
 	localparam logic [1:0] TRACKBALL_NONE    = 2'd0;
 	localparam logic [1:0] TRACKBALL_ONE     = 2'd1;
 	localparam logic [1:0] TRACKBALL_TWO     = 2'd2;
@@ -156,6 +161,31 @@ package itech32_profile_pkg;
 					profile.grom_pages          = 7'd17;
 					profile.sample_slots        = {SAMPLE_EMPTY, SAMPLE_SLOT_B,
 						SAMPLE_EMPTY, SAMPLE_SLOT_A};
+				end
+				// MAME's sftm machine with init_shuffle_bowl_common: the SFTM
+				// board plus two trackball ports, a 0x28000 sound ROM, and
+				// samples in ES5506 banks 0 and 1. Shuffleshot has no bank 1
+				// data; its slot is zero-filled.
+				SELECT_WCBOWL_020, SELECT_WCBOWL_DX, SELECT_SHUFSHOT: begin
+					profile.input_layout        = INPUTS_SHUFFLE_BOWL;
+					profile.trackball           = TRACKBALL_TWO;
+					profile.sound_last_bank     = 8'd5;
+					profile.sample_slots        = {SAMPLE_EMPTY, SAMPLE_EMPTY,
+						SAMPLE_SLOT_B, SAMPLE_SLOT_A};
+					case (selector)
+						SELECT_WCBOWL_020: begin
+							profile.protection_address = 15'h1116; // init_wcbowln
+							profile.grom_pages         = 7'd17;
+						end
+						SELECT_WCBOWL_DX: begin
+							profile.protection_address = 15'h111a; // init_shufshot
+							profile.grom_pages         = 7'd17;
+						end
+						default: begin
+							profile.protection_address = 15'h111a;
+							profile.grom_pages         = 7'd16;
+						end
+					endcase
 				end
 				default: begin end
 			endcase

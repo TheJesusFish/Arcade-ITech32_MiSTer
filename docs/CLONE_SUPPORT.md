@@ -18,8 +18,10 @@ to match the release descriptors.
 | Hard Yardage | `hardyard11`, `hardyard10` | `03` | Same board as `hardyard`; not yet hardware-tested |
 | Pairs | `pairsa` | `04` | Same board as `pairs`; not yet hardware-tested |
 | Hot Memory | `hotmemry11` | `04` | Same board as `hotmemry`; not yet hardware-tested |
-| World Class Bowling | `wcbowl14`, `wcbowl13`, `wcbowl12`, `wcbowl11`, `wcbowl10` | `05` | Same 68000 board as `wcbowl15`; not yet hardware-tested |
-| World Class Bowling | `wcbowl13j` | `06` | Adds the second trackball port; not yet hardware-tested |
+| World Class Bowling | `wcbowl165`, `wcbowl161`, `wcbowl16` | `07` | Same 68EC020 board as `wcbowl` (v1.66); not yet hardware-tested |
+| World Class Bowling | `wcbowl15`, `wcbowl14`, `wcbowl13`, `wcbowl12`, `wcbowl11`, `wcbowl10` | `05` | 68000 board (MAME `bloodstm` machine); not yet hardware-tested |
+| World Class Bowling | `wcbowl13j` | `06` | 68000 board with the second trackball port; not yet hardware-tested |
+| Shuffleshot | `shufshot139`, `shufshot138`, `shufshot137`, `shufshot135` | `09` | Same board as `shufshot`; not yet hardware-tested |
 
 The Time Killers descriptors account for both monolithic and discrete GROM
 board layouts. BloodStorm revisions 2.10, 1.10, and 1.04 select the older sound
@@ -38,12 +40,18 @@ Pairs, so its descriptors search `pairs.zip` after their own archive. Pairs
 Redemption has no clones. World Class Bowling v1.1 and v1.0 select the older
 sound program and 2M sample ROM; v1.3J selects its own board profile (`06`) for
 the second trackball port and its Controls switch. MAME's parent `wcbowl`
-(v1.66) and the later bowling sets run on the 68EC020 board and are not yet
-supported.
+(v1.66) is the release descriptor; the 68000 v1.5 descriptor in
+`_World Class Bowling` is hand-written and serves as the template for the other
+68000 versions. World Class Bowling v1.61 and v1.6 select older sound programs
+and the original sample ROMs (a half-size `srom3`). Shuffleshot v1.37 and v1.35
+select the earlier GROM3 set. The earlier 68EC020 revisions (bowling v1.65-1.6,
+Shuffleshot v1.38-1.37) carry MAME's Flip Screen and Freeze Screen switches in
+place of Cabinet. World Class Bowling Deluxe has no clones. The tournament
+editions need the M48T02 timekeeper and are not yet supported.
 
 ## Reproduction and integrity
 
-Run `scripts/generate_alternative_mras.py` to recreate all 27 descriptors from
+Run `scripts/generate_alternative_mras.py` to recreate all 34 generated descriptors from
 the reviewed parent MRAs. Every index-0 ROM stream is exactly `0x2e00000` bytes
 and carries a pinned MD5. `scripts/verify_mra_roms.py` independently reproduces
 Main_MiSTer's checksum order, including merged archives, offsets, lengths,
@@ -72,9 +80,9 @@ ROM-derived fixture, checksum result, or capture is stored in this repository.
   reported `SYSTEM STATUS OK` after reload on the final production RBF. The six
   BloodStorm alternatives remain source/checksum-qualified; they were not each
   replayed through a full gameplay and NVRAM test on that exact RBF.
-- The Hard Yardage, Pairs-family, and 68000 World Class Bowling descriptors
-  (five parents, ten alternatives) reproduce their pinned MD5s from merged
-  archives. Each assembled
+- The Hard Yardage, Pairs-family, World Class Bowling, World Class Bowling
+  Deluxe, and Shuffleshot descriptors (seven parents, eighteen alternatives)
+  reproduce their pinned MD5s from merged archives. Each assembled
   stream was also compared byte-for-byte with the regions that MAME 0.288's
   `ROM_START` definitions load, at the core's DDR offsets; the BloodStorm parent
   passed the same comparison as a control. They have not yet been run on MiSTer.

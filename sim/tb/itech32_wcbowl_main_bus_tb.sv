@@ -1,11 +1,14 @@
 `timescale 1ns/1ps
 
-// ROM-free regression for the 68000 World Class Bowling ROM-board additions to
-// the bloodstm map (MAME 0.288 init_wcbowl/init_wcbowlj): trackball ports at
-// 0x680000 (and 0x680040 on v1.3J), the security PIC result word at 0x680080
-// (the work-RAM word at 0x111c), and the zero-reading 0x578000 window. Literal
-// addresses and values are written from MAME, not from the DUT decoder. The
-// BloodStorm profile must keep its open-bus response at the same addresses.
+// ROM-free regression for the trackball boards' bus additions. 68000 World
+// Class Bowling on the bloodstm map (MAME 0.288 init_wcbowl/init_wcbowlj):
+// trackball ports at 0x680000 (and 0x680040 on v1.3J), the security PIC result
+// word at 0x680080 (the work-RAM word at 0x111c), and the zero-reading 0x578000
+// window. 68EC020 Shuffleshot/World Class Bowling on the itech020 map (MAME
+// init_shuffle_bowl_common): trackball ports at 0x180800/0x181000 returning the
+// byte in both halves, and the itech020 protection byte at 0x1116 or 0x111a.
+// Literal addresses and values are written from MAME, not from the DUT
+// decoder. BloodStorm and SFTM keep their responses at the same addresses.
 module itech32_wcbowl_main_bus_tb;
     import itech32_profile_pkg::*;
     /* verilator lint_off PROCASSINIT */
@@ -139,10 +142,29 @@ module itech32_wcbowl_main_bus_tb;
         access("BS_PIC", 24'h680080, 1'b0, 32'd0, 4'hc, 32'hffff_0000, 32'hffff_0000, 2);
         access("BS_578000", 24'h578000, 1'b0, 32'd0, 4'hc, 32'hffff_0000, 32'hffff_0000, 2);
 
+        // 68EC020 bowling: protection byte 0x1116 (bytes 0x1114..7 = 11 22 33 44)
+        // on CPU lane +2, trackballs in both halves of their 32-bit ports.
+        select(SELECT_WCBOWL_020);
+        access("020_RAM_WRITE", 24'h001114, 1'b1, 32'h1122_3344, 4'hf, 32'd0, 32'd0, 2);
+        access("020_PROTECTION", 24'h680002, 1'b0, 32'd0, 4'h2, 32'h0000_3300, 32'h0000_ff00, 3);
+        trackball1 = 8'h5a; trackball2 = 8'h77;
+        access("020_TB1", 24'h180800, 1'b0, 32'd0, 4'hf, 32'h005a_005a, 32'hffff_ffff, 2);
+        access("020_TB1_HIGH", 24'h180802, 1'b0, 32'd0, 4'h3, 32'h005a_005a, 32'h0000_ffff, 2);
+        access("020_TB2", 24'h181000, 1'b0, 32'd0, 4'hf, 32'h0077_0077, 32'hffff_ffff, 2);
+        access("020_ZERO_578000", 24'h578000, 1'b0, 32'd0, 4'hf, 32'h0000_0000, 32'hffff_ffff, 2);
+        // Shuffleshot and Deluxe read the protection byte at 0x111a.
+        select(SELECT_SHUFSHOT);
+        access("SHUF_RAM_WRITE", 24'h001118, 1'b1, 32'haabb_ccdd, 4'hf, 32'd0, 32'd0, 2);
+        access("SHUF_PROTECTION", 24'h680002, 1'b0, 32'd0, 4'h2, 32'h0000_cc00, 32'h0000_ff00, 3);
+        access("SHUF_TB2", 24'h181000, 1'b0, 32'd0, 4'hf, 32'h0077_0077, 32'hffff_ffff, 2);
+        // SFTM has no trackball: the same address keeps its zero unmapped read.
+        select(SELECT_SFTM);
+        access("SFTM_TB1", 24'h180800, 1'b0, 32'd0, 4'hf, 32'h0000_0000, 32'hffff_ffff, 2);
+
         if (video_req || rom_req || sound_command_valid || watchdog_strobe ||
             vint_ack_strobe || special_read_strobe || color0_strobe || color1_strobe)
             $fatal(1, "WCBOWL_BUS_UNEXPECTED_SIDE_EFFECT");
-        if (checks != 19) $fatal(1, "WCBOWL_BUS_CASE_COUNT %0d", checks);
+        if (checks != 29) $fatal(1, "WCBOWL_BUS_CASE_COUNT %0d", checks);
         $display("WCBOWL_BUS_PASS checks=%0d", checks);
         $finish;
     end

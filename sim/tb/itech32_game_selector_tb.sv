@@ -89,8 +89,30 @@ module itech32_game_selector_tb;
 		select(SELECT_TIMEKILL);
 		assert (!profile.zero_578000 && profile.trackball == TRACKBALL_NONE)
 			else $fatal(1, "SELECTOR_TIMEKILL_WINDOW");
-		select(8'h07);
-		expect_board("SFTM_FALLBACK_07", MAP_ITECH020, 1'b0, 1'b0, 1'b1, 7'd65);
+		// MAME sftm machine + init_shuffle_bowl_common: the SFTM board with two
+		// trackballs, a six-bank sound ROM, samples in banks 0/1, and the
+		// itech020 protection byte at 0x1116 (init_wcbowln) or 0x111a.
+		select(SELECT_WCBOWL_020);
+		expect_board("WCBOWL_020", MAP_ITECH020, 1'b0, 1'b0, 1'b1, 7'd17);
+		assert (profile.input_layout == INPUTS_SHUFFLE_BOWL &&
+			profile.trackball == TRACKBALL_TWO && profile.protection_address == 15'h1116 &&
+			profile.sound_last_bank == 8'd5 && profile.zero_578000 &&
+			!profile.pic_result_read && profile.palette_format == PALETTE_DIRECT &&
+			profile.sample_slots == {SAMPLE_EMPTY, SAMPLE_EMPTY, SAMPLE_SLOT_B, SAMPLE_SLOT_A})
+			else $fatal(1, "SELECTOR_WCBOWL_020_FEATURES");
+		select(SELECT_WCBOWL_DX);
+		expect_board("WCBOWL_DX", MAP_ITECH020, 1'b0, 1'b0, 1'b1, 7'd17);
+		assert (profile.input_layout == INPUTS_SHUFFLE_BOWL &&
+			profile.trackball == TRACKBALL_TWO && profile.protection_address == 15'h111a)
+			else $fatal(1, "SELECTOR_WCBOWL_DX_FEATURES");
+		select(SELECT_SHUFSHOT);
+		expect_board("SHUFSHOT", MAP_ITECH020, 1'b0, 1'b0, 1'b1, 7'd16);
+		assert (profile.input_layout == INPUTS_SHUFFLE_BOWL &&
+			profile.trackball == TRACKBALL_TWO && profile.protection_address == 15'h111a &&
+			profile.sound_last_bank == 8'd5)
+			else $fatal(1, "SELECTOR_SHUFSHOT_FEATURES");
+		select(8'h80);
+		expect_board("SFTM_FALLBACK_80", MAP_ITECH020, 1'b0, 1'b0, 1'b1, 7'd65);
 		select(8'hff);
 		expect_board("FALLBACK", MAP_ITECH020, 1'b0, 1'b0, 1'b1, 7'd65);
 		select(SELECT_SFTM);
@@ -98,7 +120,7 @@ module itech32_game_selector_tb;
 			profile.palette_format == PALETTE_DIRECT && profile.sound_last_bank == 8'd13 &&
 			profile.zero_578000 && profile.trackball == TRACKBALL_NONE)
 			else $fatal(1, "SELECTOR_SFTM_FEATURES");
-		$display("GAME_SELECTOR_PASS profiles=7 sftm_fallbacks=2");
+		$display("GAME_SELECTOR_PASS profiles=10 sftm_fallbacks=2");
 		$finish;
 	end
 endmodule
