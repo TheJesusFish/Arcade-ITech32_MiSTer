@@ -23,7 +23,8 @@ MEMORY = ["rtl/memory/itech32_ddr_sound_cache.sv", "rtl/memory/itech32_ddr_grom_
 ES5506 = [SOUND + "itech32_es5506_par.sv", SOUND + "itech32_es5506.sv"]
 PAR_PINS = [SOUND + "itech32_es5506_par_pins.sv"]
 INPUTS = [CORE + "itech32_trackball.sv", CORE + "itech32_lightgun.sv", CORE + "itech32_inputs.sv"]
-BLOOD_BUS = [CORE + "itech32_main_bus.sv", CORE + "itech32_blitter.sv",
+BLITTER = [CORE + "itech32_deferred_fill.sv", CORE + "itech32_blitter.sv"]
+BLOOD_BUS = [CORE + "itech32_main_bus.sv", *BLITTER,
              "sim/tb/itech32_bloodstorm_bus_env.sv"]
 SOUND_CACHE_PHASE = [CORE + "itech32_rate_enable.sv", *MEMORY,
                      SOUND + "third_party/mc6809i/mc6809i.v",
@@ -75,16 +76,17 @@ TESTS = {
     "timekeeper-bus": test("itech32_timekeeper_bus_tb", [CORE + "itech32_main_bus.sv",
                                                          CORE + "itech32_timekeeper.sv"]),
     "cpu-adapter": test("itech32_tg68_bus_adapter_tb", [CORE + "itech32_tg68_bus_adapter.sv"]),
-    "blitter": test("itech32_blitter_tb", [CORE + "itech32_blitter.sv"]),
+    "blitter": test("itech32_blitter_tb", BLITTER),
+    "deferred-fill": test("itech32_deferred_fill_tb", [CORE + "itech32_deferred_fill.sv"]),
     "scanout-planes": test("itech32_scanout_planes_tb", [CORE + "itech32_scanout.sv"]),
     "graphics-queue": test("itech32_graphics_queue_tb",
                            [CORE + "itech32_board.sv", CORE + "itech32_gun_irq.sv", CORE + "itech32_main_bus.sv",
-                            CORE + "itech32_blitter.sv", CORE + "itech32_vram_arbiter.sv",
+                            *BLITTER, CORE + "itech32_vram_arbiter.sv",
                             CORE + "itech32_video_timing.sv", CORE + "itech32_scanout.sv",
                             "sim/tb/itech32_graphics_cpu_bfm.sv", *MEMORY],
                            compiler_args=("-Wno-PROCASSWIRE",),
                            runs=(("+SEED=305419896",), ("+SEED=224680066",), ("+SEED=8675309",))),
-    "rle-prefetch": test("itech32_rle_prefetch_tb", [CORE + "itech32_blitter.sv"]),
+    "rle-prefetch": test("itech32_rle_prefetch_tb", BLITTER),
     "sftm-protection": test("itech32_sftm_protection_tb", [CORE + "itech32_main_bus.sv"]),
     "wcbowl-bus": test("itech32_wcbowl_main_bus_tb", [CORE + "itech32_main_bus.sv"]),
     "golden-tee-bus": test("itech32_golden_tee_main_bus_tb", [CORE + "itech32_main_bus.sv"]),

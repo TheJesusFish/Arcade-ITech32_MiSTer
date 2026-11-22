@@ -500,6 +500,18 @@ module itech32_board
 			sim_ce_pixel_gap <= sim_ce_pixel_gap + 4'd1;
 		end
 	end
+
+`ifdef VERILATOR
+	// Scanout reads DDR directly, so a row left pending by a deferred command
+	// 6 shows stale pixels until itech32_deferred_fill writes it. Quartus does
+	// not define SYNTHESIS and cannot resolve this hierarchical reference.
+	always_ff @(posedge clk) begin
+		if (!reset && profile.deferred_shift_fill && scan_vram_req && scanline_accept &&
+			blitter.deferred_fill.pending_bits[{scan_vram_addr[19], scan_vram_addr[18:9]}])
+			$warning("deferred fill: scanout read pending plane %0d row %0d",
+				scan_vram_addr[19], scan_vram_addr[18:9]);
+	end
+`endif
 `endif
 
 endmodule

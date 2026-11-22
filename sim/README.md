@@ -84,6 +84,7 @@ explicit `*_PASS` assertion message and zero simulation errors.
 | `trackball` | Mouse/stick/d-pad trackball emulation: orientation, gain, one count per release strobe independent of the stick tick, saturation, dead zone, 8-bit counter wrap, plus a randomized reference-model comparison |
 | `cpu-adapter` | TG68 bus-adapter handshake |
 | `blitter`, `rle-prefetch` | Synthetic blits and RLE prefetch behavior |
+| `deferred-fill` | Golden Tee's deferred command 6 against an eager reference: every read during a pending copy, the whole framebuffer after the background fill, both planes, both directions, row wrap at 1024 and 512 rows, a new copy over the row last proved clean, randomized writes/reads/idle with same-cycle and delayed acknowledges, held-payload checks, and same-cycle pass-through with no writes when disabled |
 | `graphics-queue` | Production board/main bus/blitter/gather/FIFO/forward slice and DDR service/terminator together; delayed writes, full/wrapped FIFO, ordered completion/readback, partial qwords, both planes, repeated addresses, raw/RLE/copy commands, and board-reset cancellation |
 | `sftm-protection` | SFTM zero-read protection source, protected-byte lane, and unchanged Time Killers/BloodStorm open-bus policy |
 | `wcbowl-bus` | Trackball-board reads on both maps: trackball ports, security-PIC result word, itech020 protection bytes, zero window, and unchanged BloodStorm/SFTM responses |

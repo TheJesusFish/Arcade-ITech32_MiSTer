@@ -139,6 +139,12 @@ package itech32_profile_pkg;
 		// (always "ready"); Golden Tee waits on these bits before switching its
 		// blitter interrupt off, and deadlocks its command queue without them.
 		logic        blitter_status_live;
+		// Command 6 (shift-register copy) of whole rows completes once the
+		// destination rows are marked; itech32_deferred_fill writes them later.
+		// The board's VRAM row transfers finish the copy at once, and Golden Tee
+		// polls for it inside its last scanline interrupt of the frame, so a
+		// copy written out first makes it miss the next frame's interrupts.
+		logic        deferred_shift_fill;
 		// Two bits per ES5506 bank, bank 0 in bits 1:0 (SAMPLE_* values).
 		logic [7:0]  sample_slots;
 		// itech020 map: the M48T02 timekeeper's 2 KiB at 0x681000-0x6817ff,
@@ -180,6 +186,7 @@ package itech32_profile_pkg;
 			profile.grom_pages          = 7'd65;
 			profile.grom_banked         = 1'b1;
 			profile.blitter_status_live = 1'b0;
+			profile.deferred_shift_fill = 1'b0;
 			profile.sample_slots        = {SAMPLE_SLOT_B, SAMPLE_EMPTY,
 				SAMPLE_EMPTY, SAMPLE_SLOT_A};
 			profile.timekeeper          = 1'b0;
@@ -283,6 +290,7 @@ package itech32_profile_pkg;
 					profile.grom_pages          = 7'd12;
 					profile.grom_banked         = 1'b0;
 					profile.blitter_status_live = 1'b1;
+					profile.deferred_shift_fill = 1'b1;
 					case (selector)
 						SELECT_GT_S: begin
 							profile.trackball      = TRACKBALL_ONE;

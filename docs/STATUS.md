@@ -628,6 +628,50 @@ Adds Must Shoot TV (MAME `shoottv`, a prototype light-gun game):
   Over. Player 2's gun was not exercised (one virtual controller).
   This RBF supersedes the tournament build.
 
+## Golden Tee frame-rate fix (2026-11-21)
+
+Testers reported Golden Tee running at a low frame rate, perhaps half, and
+possibly without its announcer.
+
+- Cause, found by simulating the complete production RTL in Verilator
+  (TG68K.C converted with GHDL) running Golden Tee '97 v1.30 beside MAME 0.288
+  with the same NVRAM: the attract screens flipped 30 times per second against
+  MAME's 60. Golden Tee's last scanline interrupt of the frame (line 239)
+  flips, starts a command-6 shift-register copy that clears the hidden buffer
+  (256 rows per enabled plane), polls the live status until the blitter is
+  ready, and only then arms the next frame's line-1 interrupt. Written through
+  DDR the copy took 5.7 ms, past line 1, so every other frame lost its
+  interrupt chain. Running the 68EC020 enable on every clock did not change
+  this; an instant command 6 restored 60.
+- Fix: the `deferred_shift_fill` profile field (the six Golden Tee boards and
+  the tournament board) and `itech32_deferred_fill` between the blitter engine
+  and the VRAM bridge (`docs/DEVELOPMENT.md`). A whole-row command 6 now
+  completes in about 0.13 ms; destination rows are written before the blitter
+  next touches them, or while it is idle. Other boards are unchanged.
+- Simulation results: the start-up and attract screens follow MAME second by
+  second; the gameplay demo averages 18.3 flips per second against MAME's 20.8;
+  the sampled course frames match MAME's screens, and a Verilator-only check
+  found no scanout of a pending row. The sound-command sequence matches MAME's
+  command for command (MAME itself never overwrites an unread command), and the
+  ES5506 reported no sample-cache underrun through the attract demo with DDR
+  read latencies of 10 and 24 clocks. The announcer was therefore not
+  reproduced; only the attract sequence was simulated.
+- Remaining difference: on the same code the TG68 path completes about 58% of
+  the 68EC020 bus work MAME's does per frame (16-bit accesses and a handshake
+  per access), which limits the heaviest course scenes.
+- Simulation: new `deferred-fill` bench (eager reference, 23 checks, 263
+  checked reads); four planted mutations (no pending check, wrong fill data,
+  ignored direction, stale clean-row proof) were each rejected.
+  `game-selector` checks the new field. The full suite passes 107 runs across
+  58 testbenches; lint reports no new core-side warnings.
+- Quartus Prime Lite 17.0.2 (default seed): worst setup slack `+0.006 ns`
+  (HDMI scaler), core clock `+1.138 ns`, worst hold `+0.118 ns`, TNS `0` at all
+  four corners; synthesis reports the same 53 warnings; post-fit HDMI check
+  reports physical C5. Utilization is 26,632 ALMs, 33,085 registers, 451 RAM
+  blocks, and 48 DSP blocks. RBF SHA-256:
+  `C4E7AEF91B889A921B2D48B33EE1F39B581020AEA9E333019E1801BD0784B327`.
+- Not yet hardware-tested. This RBF supersedes the Must Shoot TV build.
+
 ## Reproduction
 
 Use Quartus Prime Lite 17.0.2 as described in `docs/BUILD.md`. Run the ROM-free

@@ -133,8 +133,10 @@ module itech32_blitter
 		ST_SHIFT_READ        = 4'd9,
 		ST_RLE_FETCH_DRAIN   = 4'd10,
 		ST_SHIFT_BUFFER_READ = 4'd11,
+		ST_FILL_PREPARE      = 4'd12,
 		ST_WAIT_DRAIN        = 4'd13,
-		ST_SHIFT_REPLAY      = 4'd14
+		ST_SHIFT_REPLAY      = 4'd14,
+		ST_FILL_ARM          = 4'd15
 	} state_t;
 
 	state_t state;
@@ -268,6 +270,21 @@ module itech32_blitter
 	logic [8:0] shift_output_word;
 	logic       shift_output_valid;
 	logic [15:0] shift_output_data;
+	// Boards with deferred_shift_fill capture a whole-row command 6 source and
+	// leave its destination rows to itech32_deferred_fill (see that module).
+	logic op_deferred_fill;
+	logic fill_prepare_ready;
+	logic fill_arm_ack;
+
+	// The engine's VRAM handshake; itech32_deferred_fill sits between it and
+	// the module's VRAM port and passes it through while no row is pending.
+	logic eng_vram_req;
+	logic eng_vram_we;
+	logic eng_vram_plane;
+	logic [VRAM_ADDR_WIDTH-1:0] eng_vram_addr;
+	logic [15:0] eng_vram_wdata;
+	logic eng_vram_ack;
+	logic [15:0] eng_vram_rdata;
 
 	// Pre-stage the raw-pixel GROM address independently of the clip/row
 	// decision.  The following state copies it into the held request payload,
@@ -422,7 +439,7 @@ module itech32_blitter
 		(((op_flags & FLAG_WIDTHPIX) != 16'd0) ?
 		 (raw_width_plus_eight <= raw_width_limit) :
 		 (raw_src_x_plus_eight <= raw_width_limit));
-	wire rle_output_ready = !rle_output_valid || vram_ack;
+	wire rle_output_ready = !rle_output_valid || eng_vram_ack;
 	// Fast RLE uses a unit signed X step. Eight transparent repeat pixels
 	// have no source-byte or VRAM side effect, so retire them together. The
 	// widened row bound prevents column wrap at widths near 65535. Literal,
@@ -459,17 +476,17 @@ module itech32_blitter
 	always_comb begin
 		grom_req  = 1'b0;
 		grom_addr = '0;
-		vram_req   = 1'b0;
-		vram_we    = 1'b0;
-		vram_plane = vram_plane_hold;
-		vram_addr  = vram_addr_hold;
-		vram_wdata = vram_wdata_hold;
+		eng_vram_req   = 1'b0;
+		eng_vram_we    = 1'b0;
+		eng_vram_plane = vram_plane_hold;
+		eng_vram_addr  = vram_addr_hold;
+		eng_vram_wdata = vram_wdata_hold;
 		if (state == ST_RLE_STREAM) begin
-			vram_req = rle_output_valid;
-			vram_we = rle_output_valid;
-			vram_plane = rle_output_plane;
-			vram_addr = rle_output_addr;
-			vram_wdata = rle_output_data;
+			eng_vram_req = rle_output_valid;
+			eng_vram_we = rle_output_valid;
+			eng_vram_plane = rle_output_plane;
+			eng_vram_addr = rle_output_addr;
+			eng_vram_wdata = rle_output_data;
 		end
 		if ((state == ST_RLE_STREAM || state == ST_RLE_FETCH_DRAIN) &&
 			rle_fetch_valid) begin
@@ -480,41 +497,63 @@ module itech32_blitter
 		if (state == ST_RAW_GROM_ADDR)
 			grom_addr = grom_addr_prep;
 		if (state == ST_RAW_PROCESS)
-			vram_addr = vram_addr_prep;
+			eng_vram_addr = vram_addr_prep;
 		if (state == ST_RAW_PROCESS) begin
-			vram_plane = current_plane;
-			vram_wdata = active_color(current_plane) | {8'd0, pixel_value};
+			eng_vram_plane = current_plane;
+			eng_vram_wdata = active_color(current_plane) | {8'd0, pixel_value};
 			if (!(((op_flags & FLAG_TRANSPARENT) != 16'd0) &&
 				pixel_value == 8'hff)) begin
-				vram_req = 1'b1;
-				vram_we = 1'b1;
+				eng_vram_req = 1'b1;
+				eng_vram_we = 1'b1;
 			end
 		end
 		case (state)
 			ST_RAW_GROM_ADDR: grom_req = !raw_qword_hit_q;
 
 			ST_XFER_WRITE: begin
-				vram_req = 1'b1;
-				vram_we  = 1'b1;
+				eng_vram_req = 1'b1;
+				eng_vram_we  = 1'b1;
 			end
 			ST_SHIFT_REPLAY: begin
-				vram_req = shift_output_valid;
-				vram_we = shift_output_valid;
-				vram_plane = current_plane;
-				vram_addr = shift_dest_base +
+				eng_vram_req = shift_output_valid;
+				eng_vram_we = shift_output_valid;
+				eng_vram_plane = current_plane;
+				eng_vram_addr = shift_dest_base +
 					VRAM_ADDR_WIDTH'(shift_output_word);
-				vram_wdata = shift_output_data;
+				eng_vram_wdata = shift_output_data;
 			end
 
 			ST_XFER_READ,
 			ST_SHIFT_READ: begin
-				vram_req = 1'b1;
-				vram_we  = 1'b0;
+				eng_vram_req = 1'b1;
+				eng_vram_we  = 1'b0;
 			end
 
 			default: begin end
 		endcase
 	end
+
+	itech32_deferred_fill #(.VRAM_ADDR_WIDTH(VRAM_ADDR_WIDTH)) deferred_fill (
+		.clk(clk), .reset(reset),
+		.enable(profile.deferred_shift_fill), .rows_512(profile.vram_512_rows),
+		.prepare_req(state == ST_FILL_PREPARE), .prepare_plane(current_plane),
+		.prepare_ready(fill_prepare_ready),
+		.capture_we(op_deferred_fill && state == ST_SHIFT_READ && eng_vram_ack),
+		.capture_plane(current_plane), .capture_word(shift_word[8:0]),
+		.capture_data(eng_vram_rdata),
+		.arm_req(state == ST_FILL_ARM), .arm_plane(current_plane),
+		.arm_first_row(shift_dest_base[VRAM_ADDR_WIDTH-1:VRAM_ADDR_WIDTH-10]),
+		.arm_down((op_flags & FLAG_YFLIP) != 16'd0),
+		.arm_rows(op_height - 9'd1),
+		.arm_ack(fill_arm_ack),
+		.background_ok(state == ST_IDLE),
+		.blit_req(eng_vram_req), .blit_we(eng_vram_we), .blit_plane(eng_vram_plane),
+		.blit_addr(eng_vram_addr), .blit_wdata(eng_vram_wdata),
+		.blit_ack(eng_vram_ack), .blit_rdata(eng_vram_rdata),
+		.mem_req(vram_req), .mem_we(vram_we), .mem_plane(vram_plane),
+		.mem_addr(vram_addr), .mem_wdata(vram_wdata),
+		.mem_ack(vram_ack), .mem_rdata(vram_rdata)
+	);
 
 	assign busy = (state != ST_IDLE);
 	assign irq_blitter = |(interrupt_state & video_regs[REG_INTENABLE] & INT_BLITTER);
@@ -547,15 +586,15 @@ module itech32_blitter
 		if (state == ST_SHIFT_BUFFER_READ) begin
 			shift_line_read_enable = 1'b1;
 		end else if (state == ST_SHIFT_REPLAY && shift_fetch_valid &&
-			(!shift_output_valid || vram_ack) && shift_fetch_word != 9'd511) begin
+			(!shift_output_valid || eng_vram_ack) && shift_fetch_word != 9'd511) begin
 			shift_line_read_addr = shift_fetch_word + 9'd1;
 			shift_line_read_enable = 1'b1;
 		end
 	end
 
 	always_ff @(posedge clk) begin
-		if (state == ST_SHIFT_READ && vram_ack)
-			shift_line[shift_word[8:0]] <= vram_rdata;
+		if (state == ST_SHIFT_READ && eng_vram_ack)
+			shift_line[shift_word[8:0]] <= eng_vram_rdata;
 		if (shift_line_read_enable)
 			shift_line_q <= shift_line[shift_line_read_addr];
 	end
@@ -659,6 +698,7 @@ module itech32_blitter
 			shift_output_word <= 9'd0;
 			shift_output_valid <= 1'b0;
 			shift_output_data <= 16'd0;
+			op_deferred_fill <= 1'b0;
 			for (index = 0; index < 128; index = index + 1)
 				video_regs[index] <= 16'd0;
 			color_latch[0] <= 16'd0;
@@ -719,10 +759,10 @@ module itech32_blitter
 				rle_fetch_valid <= 1'b1;
 				rle_fetch_next <= 1'b1;
 			end
-			if (state == ST_RLE_STREAM && rle_output_valid && vram_ack)
+			if (state == ST_RLE_STREAM && rle_output_valid && eng_vram_ack)
 				rle_output_valid <= 1'b0;
 			if (state == ST_SHIFT_REPLAY && shift_fetch_valid &&
-				(!shift_output_valid || vram_ack)) begin
+				(!shift_output_valid || eng_vram_ack)) begin
 				shift_output_valid <= 1'b1;
 				shift_output_word <= shift_fetch_word;
 				shift_output_data <= shift_line_q;
@@ -951,7 +991,13 @@ module itech32_blitter
 									shift_dest_base <= integer_vram_address(command_x_q, command_y_q + 12'd1);
 								vram_plane_hold <= plane_enable[0] ? 1'b0 : 1'b1;
 								vram_addr_hold <= integer_vram_address(command_x_q, command_y_q);
-								state <= ST_SHIFT_READ;
+								// A whole-row copy defers its destination rows. A copy
+								// starting mid-row spans two rows per line and keeps
+								// the replay below.
+								op_deferred_fill <= profile.deferred_shift_fill &&
+									command_x_q[8:0] == 9'd0;
+								state <= (profile.deferred_shift_fill &&
+									command_x_q[8:0] == 9'd0) ? ST_FILL_PREPARE : ST_SHIFT_READ;
 							end
 						end
 
@@ -1040,7 +1086,7 @@ module itech32_blitter
 
 				ST_RAW_PROCESS: begin
 					if ((((op_flags & FLAG_TRANSPARENT) != 16'd0) && pixel_value == 8'hff) ||
-						vram_ack) begin
+						eng_vram_ack) begin
 						src_x_acc <= src_x_acc + {16'd0, op_src_xstep};
 						pixel_width_acc <= pixel_width_acc + 32'h100;
 						dst_x_acc <= dst_x_acc + op_dx;
@@ -1179,14 +1225,14 @@ module itech32_blitter
 					end
 				end
 
-				ST_XFER_READ: if (vram_ack) begin
-					xfer_old_pixel <= vram_rdata;
+				ST_XFER_READ: if (eng_vram_ack) begin
+					xfer_old_pixel <= eng_vram_rdata;
 					// Command 3 uses the live color latch on every port write.
 					vram_wdata_hold <= color_latch[xfer_plane] | {8'd0, xfer_cpu_pixel};
 					state <= ST_XFER_WRITE;
 				end
 
-				ST_XFER_WRITE: if (vram_ack) begin
+				ST_XFER_WRITE: if (eng_vram_ack) begin
 					video_regs[REG_TRANSFER] <= xfer_old_pixel;
 					if (!xfer_plane && plane_enable[1]) begin
 						xfer_plane <= 1'b1;
@@ -1211,7 +1257,7 @@ module itech32_blitter
 					end
 				end
 
-				ST_SHIFT_READ: if (vram_ack) begin
+				ST_SHIFT_READ: if (eng_vram_ack) begin
 					if (shift_word == 10'd511) begin
 						shift_word <= 10'd0;
 						// The entire 512-word source snapshot is now durable in the
@@ -1219,10 +1265,28 @@ module itech32_blitter
 						shift_fetch_word <= 9'd0;
 						shift_fetch_valid <= 1'b0;
 						shift_output_valid <= 1'b0;
-						state <= ST_SHIFT_BUFFER_READ;
+						state <= op_deferred_fill ? ST_FILL_ARM : ST_SHIFT_BUFFER_READ;
 					end else begin
 						shift_word <= shift_word + 10'd1;
 						vram_addr_hold <= shift_source_base + VRAM_ADDR_WIDTH'(shift_word) + 1'b1;
+					end
+				end
+
+				// Deferred command 6: wait until this plane's fill line is free,
+				// read the source row (ST_SHIFT_READ captures it), then mark the
+				// destination rows pending and continue with the next plane.
+				ST_FILL_PREPARE: if (fill_prepare_ready)
+					state <= ST_SHIFT_READ;
+
+				ST_FILL_ARM: if (fill_arm_ack) begin
+					if (!current_plane && op_plane1_enabled) begin
+						current_plane <= 1'b1;
+						vram_plane_hold <= 1'b1;
+						shift_word <= 10'd0;
+						vram_addr_hold <= shift_source_base;
+						state <= ST_FILL_PREPARE;
+					end else begin
+						state <= ST_WAIT_DRAIN;
 					end
 				end
 
@@ -1234,11 +1298,11 @@ module itech32_blitter
 				end
 
 				// A two-entry elastic pipe surrounds the one-cycle M10K read.  Its
-				// output payload is registered and remains stable while vram_ack is
+				// output payload is registered and remains stable while eng_vram_ack is
 				// low.  On every accepted word the next RAM result replaces it and a
 				// new read is issued, so steady-state replay is one word per clock.
 				ST_SHIFT_REPLAY: begin
-					if (!shift_output_valid || vram_ack) begin
+					if (!shift_output_valid || eng_vram_ack) begin
 						if (shift_fetch_valid) begin
 							if (shift_fetch_word != 9'd511) begin
 								shift_fetch_word <= shift_fetch_word + 1'b1;
@@ -1252,7 +1316,7 @@ module itech32_blitter
 						end
 					end
 
-					if (shift_output_valid && vram_ack &&
+					if (shift_output_valid && eng_vram_ack &&
 						shift_output_word == 9'd511) begin
 						shift_fetch_valid <= 1'b0;
 						if (shift_row + 9'd1 >= op_height) begin
@@ -1385,7 +1449,7 @@ module itech32_blitter
 					else $fatal(1,"RLE output payload changed while stalled");
 			end
 			sim_rle_output_stalled <= state == ST_RLE_STREAM &&
-				rle_output_valid && !vram_ack;
+				rle_output_valid && !eng_vram_ack;
 			sim_rle_output_addr <= rle_output_addr;
 			sim_rle_output_data <= rle_output_data;
 			sim_rle_output_plane <= rle_output_plane;

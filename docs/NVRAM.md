@@ -12,8 +12,11 @@ detached settings copy:
 
 The tournament boards' M48T02 maps one byte per CPU address (offset `n` at
 `0x681000 + n`). Its 2 KiB follows the 128 KiB store in the saved image, in
-offset order, so the file is MAME's `nvram32` and `m48t02` images
-concatenated. The last eight bytes are the clock registers; as in MAME, the
+offset order, so the file holds MAME's `nvram32` and `m48t02` images
+concatenated, with one difference: MAME saves the 32-bit `nvram32` share in
+the host's little-endian order, so each four-byte group of MAME's file is
+reversed relative to this core's big-endian image (checked with Golden Tee
+'97 in MAME 0.288). The last eight bytes are the clock registers; as in MAME, the
 saved copies are not restored into the running clock, which restarts from the
 MiSTer clock at each game load (`docs/DEVELOPMENT.md`).
 

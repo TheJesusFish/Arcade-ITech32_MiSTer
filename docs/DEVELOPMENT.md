@@ -94,6 +94,25 @@ the queue's busy flag never clears, and the game hangs at its first course
 games acknowledge the blitter bit only in their interrupt handler and keep
 MAME's static value.
 
+Golden Tee also polls those bits inside its last scanline interrupt of the
+frame (line 239). There it flips, starts a command-6 shift-register copy that
+clears the hidden buffer (256 rows of 512 pixels per enabled plane), waits for
+"ready", and only then arms the next frame's first scanline interrupt (line
+1). The board's VRAMs make that copy with internal row transfers and MAME's is
+instant; written out through DDR it took 5.7 ms, past line 1, so the game lost
+every other frame (30 instead of MAME's 60 flips per second on its attract
+screens, measured in a full-core simulation). With `deferred_shift_fill`
+(Golden Tee only) a whole-row command 6 completes once `itech32_deferred_fill`
+has captured the source row and marked the destination rows pending, in about
+0.13 ms. That module, between the blitter engine and the VRAM bridge, writes a
+pending row before any blitter read or write reaches it and otherwise while
+the blitter is idle; with nothing pending it passes requests straight
+through. A second copy of a plane waits until that plane's earlier rows are
+written. Scanout reads DDR directly: Golden Tee copies into the hidden buffer
+at least a frame before showing it, and a simulation-only check in
+`itech32_board` warns if scanout reads a pending row. Copies that start
+mid-row span two rows per line and keep the eager replay.
+
 `10` is Power Up Baseball (MAME `pubball` machine, `init_pubball`): the SFTM
 row with two 1024-row planes, SFTM's colour latches, two 4-bit trackballs at
 `0x180800`/`0x181000`, a 28-page GROM without bank bits, a six-bank sound ROM,

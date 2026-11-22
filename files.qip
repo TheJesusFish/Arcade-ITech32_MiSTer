@@ -13,6 +13,7 @@ set_global_assignment -name SYSTEMVERILOG_FILE rtl/itech32/itech32_video_path.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/itech32/itech32_scanout.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/itech32/itech32_vram_arbiter.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/itech32/itech32_main_bus.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/itech32/itech32_deferred_fill.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/itech32/itech32_blitter.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/itech32/itech32_trackball.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/itech32/itech32_lightgun.sv

@@ -212,15 +212,18 @@ module itech32_game_selector_tb;
 			!profile.timekeeper && !profile.blitter_status_live &&
 			profile.sample_slots == {SAMPLE_EMPTY, SAMPLE_EMPTY, SAMPLE_EMPTY, SAMPLE_SLOT_A})
 			else $fatal(1, "SELECTOR_SHOOTTV_FEATURES");
-		// Only the tournament selectors have the timekeeper, and only Must
-		// Shoot TV the light guns.
+		// Only the tournament selectors have the timekeeper, only Must Shoot TV
+		// the light guns, and only the Golden Tee boards the deferred command 6.
 		for (int s = 0; s < 20; s++) begin
 			select(8'(s));
 			assert (profile.timekeeper == (s == 8'h11 || s == 8'h12) &&
-				profile.lightgun == (s == 8'h13) && profile.vint_disabled == (s == 8'h13))
+				profile.lightgun == (s == 8'h13) && profile.vint_disabled == (s == 8'h13) &&
+				profile.deferred_shift_fill == ((s >= 8'h0a && s <= 8'h0f) || s == 8'h11))
 				else $fatal(1, "SELECTOR_FEATURE_ONLY %0d", s);
 		end
 		select(8'h40);
+		assert (!profile.deferred_shift_fill)
+			else $fatal(1, "SELECTOR_FALLBACK_DEFERRED_FILL");
 		expect_board("SFTM_FALLBACK_40", MAP_ITECH020, 1'b0, 1'b0, 1'b1, 7'd65);
 		select(8'h80);
 		expect_board("SFTM_FALLBACK_80", MAP_ITECH020, 1'b0, 1'b0, 1'b1, 7'd65);
