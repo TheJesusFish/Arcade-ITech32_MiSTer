@@ -145,6 +145,12 @@ package itech32_profile_pkg;
 		// polls for it inside its last scanline interrupt of the frame, so a
 		// copy written out first makes it miss the next frame's interrupts.
 		logic        deferred_shift_fill;
+		// The CPU adapter answers program-ROM reads of resident main-cache
+		// lines from the cache's line RAM (itech32_ddr_main_cache fast port)
+		// instead of over the board bus and DDR request handshake. A board
+		// bus ROM read costs the TG68 several CPU enables the 68EC020 never
+		// waits; Golden Tee's green approach and putt roll are CPU-bound there.
+		logic        cpu_rom_fast_read;
 		// Two bits per ES5506 bank, bank 0 in bits 1:0 (SAMPLE_* values).
 		logic [7:0]  sample_slots;
 		// itech020 map: the M48T02 timekeeper's 2 KiB at 0x681000-0x6817ff,
@@ -187,6 +193,7 @@ package itech32_profile_pkg;
 			profile.grom_banked         = 1'b1;
 			profile.blitter_status_live = 1'b0;
 			profile.deferred_shift_fill = 1'b0;
+			profile.cpu_rom_fast_read   = 1'b0;
 			profile.sample_slots        = {SAMPLE_SLOT_B, SAMPLE_EMPTY,
 				SAMPLE_EMPTY, SAMPLE_SLOT_A};
 			profile.timekeeper          = 1'b0;
@@ -291,6 +298,7 @@ package itech32_profile_pkg;
 					profile.grom_banked         = 1'b0;
 					profile.blitter_status_live = 1'b1;
 					profile.deferred_shift_fill = 1'b1;
+					profile.cpu_rom_fast_read   = 1'b1;
 					case (selector)
 						SELECT_GT_S: begin
 							profile.trackball      = TRACKBALL_ONE;

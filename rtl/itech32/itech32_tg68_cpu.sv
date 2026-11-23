@@ -25,6 +25,15 @@ module itech32_tg68_cpu (
 	input  logic        board_ack,
 	input  logic [31:0] board_rdata,
 
+	// Program-ROM fast read (see itech32_tg68_bus_adapter).
+	input  logic        rom_fast_enable,
+	input  logic [1:0]  memory_map,
+	output logic        rom_fast_launch,
+	output logic [8:0]  rom_fast_index,
+	output logic [21:0] rom_fast_check_addr,
+	input  logic        rom_fast_hit,
+	input  logic [31:0] rom_fast_rdata,
+
 	output logic [31:0] debug_addr,
 	output logic [1:0]  debug_busstate,
 	output logic        debug_nwr,
@@ -147,7 +156,14 @@ module itech32_tg68_cpu (
 		.board_wdata       (board_wdata),
 		.board_be          (board_be),
 		.board_ack         (board_ack),
-		.board_rdata       (board_rdata)
+		.board_rdata       (board_rdata),
+		.rom_fast_enable   (rom_fast_enable),
+		.memory_map        (memory_map),
+		.rom_fast_launch   (rom_fast_launch),
+		.rom_fast_index    (rom_fast_index),
+		.rom_fast_check_addr (rom_fast_check_addr),
+		.rom_fast_hit      (rom_fast_hit),
+		.rom_fast_rdata    (rom_fast_rdata)
 	);
 
 	assign debug_addr     = tg_addr;

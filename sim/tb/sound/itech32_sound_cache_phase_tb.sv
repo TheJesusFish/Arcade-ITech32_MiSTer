@@ -42,6 +42,8 @@ module itech32_sound_cache_phase_tb;
         .ioctl_data(16'd0), .ioctl_wait(), .rom_loaded(loaded), .vector_load_we(),
         .vector_load_addr(), .vector_load_wdata(), .vector_load_be(),
         .main_req(1'b0), .main_addr(22'd0), .main_ack(), .main_rdata(),
+        .main_fast_launch(1'b0), .main_fast_index(9'd0), .main_fast_check_addr(22'd0),
+        .main_fast_hit(), .main_fast_rdata(),
         .grom_req(1'b0), .grom_addr(26'd0), .grom_ack(), .grom_rdata(),
         .sound_req(sound_req), .sound_addr(sound_addr), .sound_ack(sound_ack), .sound_rdata(sound_data),
         .sample_req(sample_req), .sample_bank(sample_bank), .sample_addr(sample_addr),

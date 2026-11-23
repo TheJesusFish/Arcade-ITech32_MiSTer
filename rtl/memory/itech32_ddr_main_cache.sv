@@ -10,6 +10,13 @@
 // miss is exposed (miss_pending). The scheduler then owns the 16-beat line
 // refill: launch invalidates the set, each beat writes one qword, and a
 // completed non-discarded burst publishes the tag and re-probes the request.
+//
+// A second, read-only CPU port (fast_*) lets the TG68 bus adapter test a
+// program-ROM read without the main bus or this front's request handshake.
+// The adapter launches the line-RAM read on the edge it captures the TG68
+// cycle; the next cycle reports a hit only for a published, uncontended line.
+// The fast port never allocates, refills, or changes front ownership: a miss
+// is retried by the adapter through the unchanged main_req path.
 `timescale 1ns/1ps
 
 module itech32_ddr_main_cache #(
@@ -41,7 +48,16 @@ module itech32_ddr_main_cache #(
 	input  logic                refill_write,
 	input  logic [63:0]         refill_data,
 	input  logic                refill_publish,
-	input  logic [TAG_BITS-1:0] refill_tag
+	input  logic [TAG_BITS-1:0] refill_tag,
+
+	// CPU fast read. fast_index is rom_addr[11:3] of the TG68 cycle being
+	// captured this edge; fast_check_addr is the registered ROM offset of
+	// that same cycle, presented on the following cycle with the result.
+	input  logic                fast_launch,
+	input  logic [8:0]          fast_index,
+	input  logic [21:0]         fast_check_addr,
+	output logic                fast_hit,
+	output logic [31:0]         fast_rdata
 );
 	localparam integer SETS = 1 << SET_BITS;
 
@@ -68,11 +84,18 @@ module itech32_ddr_main_cache #(
 	logic        probe_enable;
 	logic [21:0] probe_addr;
 	logic        probe_same_set;
-	logic        probe_same_word;
 	logic        refill_same_set;
 	logic        request_held;
 	logic        line_resident;
 	integer      tag_index;
+	// Shared registered read port: front probes and CPU fast reads.
+	logic        read_enable;
+	logic [8:0]  read_index;
+	logic        read_same_word;
+	logic        fast_launch_ok;
+	logic        fast_launched_q;
+	logic [8:0]  fast_index_q;
+	logic        fast_collision_q;
 
 	function automatic logic [7:0] line_byte(
 		input logic [63:0] line,
@@ -115,13 +138,33 @@ module itech32_ddr_main_cache #(
 			 request_held));
 		probe_addr = probe_start ? main_addr : front_addr_q;
 		probe_same_set = miss_scheduler_active && refill_set == probe_addr[11:7];
-		probe_same_word = refill_write &&
-			{refill_set, refill_beat} == probe_addr[11:3];
 		// A probe hit is answered only if the line is still resident and no
 		// refill of the same set is in flight.
 		line_resident = front_hit_q && read_ahead_valid[front_addr_q[11:7]] &&
 			read_ahead_tag[front_addr_q[11:7]] == front_addr_q[21:12] &&
 			!front_collision_q && !refill_same_set;
+
+		// The fast port borrows the line RAM's read port only while the front
+		// neither probes nor still needs read_ahead_q for its own response. The
+		// adapter is single-outstanding, so a front probe and a fast launch never
+		// want the port together in practice; the front keeps priority anyway.
+		fast_launch_ok = fast_launch && !cancel && !probe_enable &&
+			(front_state == MF_FREE || front_state == MF_WAIT_RELEASE);
+		read_enable = probe_enable || fast_launch_ok;
+		read_index = probe_enable ? probe_addr[11:3] : fast_index;
+		read_same_word = refill_write && {refill_set, refill_beat} == read_index;
+		// A fast result counts only for the address it launched, a set that was
+		// published at launch and is still published, and no refill owning the
+		// set at launch or now (a same-edge refill write leaves the RAM word
+		// undefined under no_rw_check). Cancellation and loader invalidation
+		// withdraw the result in the same cycle.
+		fast_hit = fast_launched_q && !cancel && !invalidate_all &&
+			fast_index_q == fast_check_addr[11:3] &&
+			read_ahead_valid[fast_index_q[8:4]] &&
+			read_ahead_tag[fast_index_q[8:4]] == fast_check_addr[21:12] &&
+			!fast_collision_q &&
+			!(miss_scheduler_active && refill_set == fast_index_q[8:4]);
+		fast_rdata = line_dword_be(read_ahead_q, {fast_check_addr[2], 2'b00});
 	end
 
 	always_ff @(posedge clk) begin
@@ -136,16 +179,25 @@ module itech32_ddr_main_cache #(
 			read_ahead_valid <= '0;
 			for (tag_index = 0; tag_index < SETS; tag_index = tag_index + 1)
 				read_ahead_tag[tag_index] <= '0;
+			fast_launched_q <= 1'b0;
 		end else begin
 			// The RAM read remains in this same clocked process as the refill
 			// write so Quartus can retain the canonical 1W/1R M10K.
-			if (probe_enable) begin
-				read_ahead_q <= read_ahead[probe_addr[11:3]];
+			if (read_enable) begin
+				read_ahead_q <= read_ahead[read_index];
 `ifdef VERILATOR
 				// Undefined same-word data must never escape the ownership checks.
-				if (probe_same_word)
+				if (read_same_word)
 					read_ahead_q <= 64'hc011_1de5_bad0_cace;
 `endif
+			end
+			fast_launched_q <= fast_launch_ok;
+			if (fast_launch_ok) begin
+				fast_index_q <= fast_index;
+				fast_collision_q <= miss_scheduler_active &&
+					refill_set == fast_index[8:4];
+			end
+			if (probe_enable) begin
 				front_hit_q <= read_ahead_valid[probe_addr[11:7]] &&
 					read_ahead_tag[probe_addr[11:7]] == probe_addr[21:12] &&
 					!probe_same_set;

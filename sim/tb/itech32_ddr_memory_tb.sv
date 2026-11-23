@@ -48,6 +48,11 @@ module itech32_ddr_memory_tb;
 	logic [21:0] main_addr = 22'd0;
 	logic main_ack;
 	logic [31:0] main_rdata;
+	logic main_fast_launch = 1'b0;
+	logic [8:0] main_fast_index = 9'd0;
+	logic [21:0] main_fast_check_addr = 22'd0;
+	logic main_fast_hit;
+	logic [31:0] main_fast_rdata;
 	logic grom_req = 1'b0;
 	logic [25:0] grom_addr = 26'd0;
 	logic grom_ack;
@@ -168,6 +173,9 @@ module itech32_ddr_memory_tb;
 		.vector_load_be(vector_load_be),
 		.main_req(main_req), .main_addr(main_addr), .main_ack(main_ack),
 		.main_rdata(main_rdata),
+		.main_fast_launch(main_fast_launch), .main_fast_index(main_fast_index),
+		.main_fast_check_addr(main_fast_check_addr),
+		.main_fast_hit(main_fast_hit), .main_fast_rdata(main_fast_rdata),
 		.grom_req(grom_req), .grom_addr(grom_addr), .grom_ack(grom_ack),
 		.grom_rdata(grom_rdata),
 		.sound_req(sound_req), .sound_addr(sound_addr), .sound_ack(sound_ack),
@@ -450,6 +458,38 @@ module itech32_ddr_memory_tb;
 			end
 			main_req = 1'b0;
 			@(negedge clk);
+		end
+	endtask
+
+	// The CPU fast port: launch on one edge with the line index, present the
+	// full ROM offset on the next cycle and sample the combinational result.
+	task automatic main_fast_read(input logic [21:0] launch_address,
+		input logic [21:0] check_address, output logic hit, output logic [31:0] data);
+		begin
+			main_fast_index = launch_address[11:3];
+			main_fast_launch = 1'b1;
+			@(negedge clk);
+			main_fast_launch = 1'b0;
+			main_fast_check_addr = check_address;
+			#1;
+			hit = main_fast_hit;
+			data = main_fast_rdata;
+			@(negedge clk);
+			#1;
+			assert (!main_fast_hit)
+				else $fatal(1, "main fast hit outlived its launch at %x", check_address);
+		end
+	endtask
+
+	task automatic expect_main_fast(input logic [21:0] address,
+		input logic expected_hit, input logic [31:0] expected);
+		logic hit;
+		logic [31:0] data;
+		begin
+			main_fast_read(address, address, hit, data);
+			assert (hit == expected_hit && (!expected_hit || data == expected))
+				else $fatal(1, "main fast read %x hit=%b data=%x expected hit=%b data=%x",
+					address, hit, data, expected_hit, expected);
 		end
 	endtask
 
@@ -1269,6 +1309,60 @@ module itech32_ddr_memory_tb;
 		main_read(22'h000080, 32'h0000_0000);
 		assert (ddr_transactions == transaction_snapshot + 1)
 			else $fatal(1, "main read-ahead cache did not refill at a line boundary");
+
+		// The CPU fast port reads published lines one cycle after its launch,
+		// never allocates or refills, and misses on any address/tag mismatch.
+		begin : main_fast_port
+			logic hit;
+			logic [31:0] data;
+			transaction_snapshot = ddr_transactions;
+			expect_main_fast(22'h000000, 1'b1, 32'h1122_3344);
+			expect_main_fast(22'h000004, 1'b1, 32'h5566_7788);
+			expect_main_fast(22'h000006, 1'b1, 32'h5566_7788);
+			expect_main_fast(22'h00007c, 1'b1, 32'h0000_0000);
+			expect_main_fast(22'h000080, 1'b1, 32'h0000_0000);
+			expect_main_fast(22'h000100, 1'b0, 32'h0000_0000);
+			// Same set as line 0, different tag.
+			expect_main_fast(22'h001000, 1'b0, 32'h0000_0000);
+			// The result belongs only to the launched line word.
+			main_fast_read(22'h000000, 22'h000008, hit, data);
+			assert (!hit) else $fatal(1, "main fast hit for a word it did not launch");
+			assert (ddr_transactions == transaction_snapshot)
+				else $fatal(1, "main fast reads issued DDR transactions");
+			// Back-to-back launches each answer their own address.
+			main_fast_index = 22'h000000 >> 3;
+			main_fast_launch = 1'b1;
+			@(negedge clk);
+			main_fast_check_addr = 22'h000000;
+			main_fast_index = 22'h000004 >> 3;
+			#1;
+			assert (main_fast_hit && main_fast_rdata == 32'h1122_3344)
+				else $fatal(1, "back-to-back main fast read 0 got %b %x", main_fast_hit, main_fast_rdata);
+			@(negedge clk);
+			main_fast_launch = 1'b0;
+			main_fast_check_addr = 22'h000004;
+			#1;
+			assert (main_fast_hit && main_fast_rdata == 32'h5566_7788)
+				else $fatal(1, "back-to-back main fast read 4 got %b %x", main_fast_hit, main_fast_rdata);
+			@(negedge clk);
+			// The front keeps its unchanged latency after fast traffic.
+			main_read(22'd4, 32'h5566_7788, expected_main_hit_edges);
+			// While the front owns a miss and its refill, fast launches are refused.
+			// Line 0x300 is otherwise unused; later cases need 0x200 to miss.
+			main_addr = 22'h000300;
+			main_req = 1'b1;
+			repeat (3) @(negedge clk);
+			assert (dut.main_cache.front_state == 3'd3)
+				else $fatal(1, "main front did not hold its miss (state %0d)", dut.main_cache.front_state);
+			expect_main_fast(22'h000000, 1'b0, 32'h0000_0000);
+			// The response is a one-cycle ACK; WAIT_RELEASE persists until release.
+			while (dut.main_cache.front_state != 3'd6)
+				@(negedge clk);
+			main_req = 1'b0;
+			@(negedge clk);
+			expect_main_fast(22'h000300, 1'b1, 32'h0000_0000);
+			$display("PASS main fast port: published lines, tag/index checks, no DDR traffic");
+		end
 
 		grom_read(26'h001234, model_byte(GROM_BASE + 28'h001234));
 		transaction_snapshot = ddr_transactions;

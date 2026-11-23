@@ -44,6 +44,8 @@ module itech32_graphics_queue_tb;
         .nvram_host_addr(18'd0), .nvram_host_wdata(16'd0), .auxiliary_irq_level(3'd0),
         .timekeeper_clock(64'd0),
         .program_rom_ack(1'b0), .program_rom_rdata(32'd0),
+        .program_rom_fast_launch(), .program_rom_fast_index(), .program_rom_fast_check_addr(),
+        .program_rom_fast_hit(1'b0), .program_rom_fast_rdata(32'd0),
         .grom_req(grom_req), .grom_addr(grom_addr), .grom_ack(grom_ack), .grom_rdata(grom_data),
         .vram_mem_req(vreq), .vram_mem_we(vwe), .vram_mem_addr(vaddr), .vram_mem_wdata(vwdata),
         .vram_mem_be(vbe), .vram_mem_ack(vack), .vram_mem_rdata(vrdata),

@@ -165,6 +165,8 @@ module itech32_audio_qword_tb;
 		.vector_load_be(vector_load_be),
 		.main_req(main_req), .main_addr(main_addr), .main_ack(main_ack),
 		.main_rdata(main_rdata),
+		.main_fast_launch(1'b0), .main_fast_index(9'd0), .main_fast_check_addr(22'd0),
+		.main_fast_hit(), .main_fast_rdata(),
 		.grom_req(grom_req), .grom_addr(grom_addr), .grom_ack(grom_ack),
 		.grom_rdata(grom_rdata),
 		.sound_req(sound_req), .sound_addr(sound_addr), .sound_ack(sound_ack),

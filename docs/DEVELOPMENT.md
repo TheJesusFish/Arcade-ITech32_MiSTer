@@ -113,6 +113,27 @@ at least a frame before showing it, and a simulation-only check in
 `itech32_board` warns if scanout reads a pending row. Copies that start
 mid-row span two rows per line and keep the eager replay.
 
+Golden Tee's heaviest course scenes are limited by main-CPU bus throughput
+rather than the blitter: the green-side approach camera and the putt roll
+(blitter busy about 2% of the time, the CPU waiting on memory about 39%).
+TG68K.C makes 16-bit accesses, and a program-ROM read that hit the main cache
+took about 8 `clk_sys` clocks through the bus adapter, main bus and memory
+front port. With `cpu_rom_fast_read` (Golden Tee boards `0a`-`0f` and `11`
+only) the bus adapter launches a read of the main cache's line RAM on the same
+edge it captures a TG68 cycle, indexed by `tg_addr[11:3]`, through the
+cache's `fast_*` port. In `MAP_CAPTURE` the adapter completes the cycle at
+once when `fast_hit` is set. The cache sets it only when the line is valid,
+its tag matches the captured address, the launched index matches, and no
+refill has touched that line since the launch. Everything else takes the
+unchanged board path: a miss, a write, an IACK or vector fetch, an address
+outside the board's program-ROM window, or a launch the cache refused. The
+cache refuses a launch while its front port has a request in progress, so
+front-port requests keep their order and latency, and a fast hit never starts
+DDR traffic. The ROM window follows the memory map: ITECH020
+`0x800000-0xBFFFFF`, Time Killers `0x100000-0x17FFFF`, BloodStorm `A23`, the
+latter two using the 512 KiB offset. The field could therefore be enabled for
+other boards, but only Golden Tee needs it.
+
 `10` is Power Up Baseball (MAME `pubball` machine, `init_pubball`): the SFTM
 row with two 1024-row planes, SFTM's colour latches, two 4-bit trackballs at
 `0x180800`/`0x181000`, a 28-page GROM without bank bits, a six-bank sound ROM,

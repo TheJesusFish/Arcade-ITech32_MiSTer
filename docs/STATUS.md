@@ -656,6 +656,42 @@ possibly without its announcer.
   ES5506 reported no sample-cache underrun through the attract demo with DDR
   read latencies of 10 and 24 clocks. The announcer was therefore not
   reproduced; only the attract sequence was simulated.
+- Other Golden Tee boards (2026-11-22): GT 3D v1.93N, GT 3D v1.92L and GT 2K
+  v1.00 with MAME-initialized NVRAM, 900 frames each. Command-6 clears per
+  second on today's core / with the fix / in MAME: GT 3D title 29 / 55-58 /
+  55-59, v1.92L 31 / 58 / 58, GT 2K 18-27 / 23-36 / 23-37 (per 300-frame
+  window). No pending-row scanout.
+- Other boards do not need the fix. Every remaining game issues the same
+  command 6 (flags `0x5184`, x 0) once per redrawn frame, but none waits for
+  it (their status reads always report ready), so the clear overlaps their
+  other work. With MAME-initialized NVRAM and 1,200 frames each, World Class
+  Bowling v1.66 and v1.5, Deluxe, Shuffleshot, Power Up Baseball, Must Shoot
+  TV, Hard Yardage and Pairs Redemption match MAME's redraw rate on the
+  current core within the attract scenes' timing. Enabling the fix for them
+  changed nothing measurable, and Power Up Baseball and Must Shoot TV then
+  scanned out 34 pending rows once during boot, so the field stays limited to
+  Golden Tee.
+- Scripted play (Golden Tee '97, coins, menus and one hole): menus, sound
+  commands and the tee shot match MAME frame for frame; play runs at 30 flips
+  per second with the fix (MAME 30) against 20 on today's core; no sample-cache
+  underrun on either core. Matched sound events have the same envelope as
+  MAME's (correlation 0.93-0.97) at about 0.65 of MAME's level throughout.
+  The same raw trackball swing gives a longer drive on the fixed core and a
+  different lie on today's core, while MAME's result does not change with the
+  swing moved three frames either way. The cause, likely read timing, is open.
+- On today's core the menu music kept playing until the hole loaded, where
+  MAME and the fixed core went quiet a second after command `0d`. This is
+  game timing, not a sound fault: with the coin inserted at frame 700, today's
+  half-rate attract had not yet sent `a7 0b 01 14 68 15 09`, which end the
+  attract song. MAME with the coin inserted at the same attract point (frame
+  501) plays the song on through the menu the same way, and it ends at the
+  same point in the song (about 17.5 s in). Both cores delivered every
+  command byte (latch 2 unused, each read within 20 us); every sound-program
+  byte the 6809 fetched matched the ROM (about 20 million each); the 240 Hz
+  timer interrupt never slipped (4.167 ms each).
+- Pairs Redemption attract (silent in MAME and the core) produced bursts of
+  ES5506 sample-cache underruns, about 0.4 s each after sound command `0a`.
+  Not yet checked in gameplay.
 - Remaining difference: on the same code the TG68 path completes about 58% of
   the 68EC020 bus work MAME's does per frame (16-bit accesses and a handshake
   per access), which limits the heaviest course scenes.
@@ -671,6 +707,102 @@ possibly without its announcer.
   blocks, and 48 DSP blocks. RBF SHA-256:
   `C4E7AEF91B889A921B2D48B33EE1F39B581020AEA9E333019E1801BD0784B327`.
 - Not yet hardware-tested. This RBF supersedes the Must Shoot TV build.
+- Testers (2026-11-22): fairway play is fixed; putting in Golden Tee Classic is
+  still slow. See the next section.
+
+## Golden Tee Classic approach and putting frame rate (2026-11-22)
+
+- Finding: the full-core simulation played Golden Tee Classic v1.00 (Mountain
+  Springs hole 1, scripted weak swings) beside MAME 0.288 with the same NVRAM.
+  The approach that lands on the green switches to a green-side camera.
+  - The fixed core: 17.8 flips per second for its first 4 s, then 14.6 until
+    "ready on the green". MAME: 26.5, then 29.8.
+  - The putt roll ran at 20-24 against MAME's 30.
+  - DDR read latencies of 16 and 24 clocks were similar, so latency is not
+    the main cause. The blitter was busy about 2% of the time and the CPU
+    waited on memory about 39% of all clocks.
+- Fix: `cpu_rom_fast_read` (Golden Tee boards `0a`-`0f` and `11`), a direct
+  read of the main cache's line RAM for TG68 program-ROM cycles
+  (`docs/DEVELOPMENT.md`). It does not change the CPU clock, the cache size,
+  or the order of memory requests.
+- Simulation (DDR latency 10, same script):
+  - The first three shots of the hole land as they do on the fixed core.
+  - Approach: 30 flips per second through flight and descent, apart from one
+    40-frame hold at the green-side camera cut. The whole 420-frame window
+    averages 27.1, against 13.9 on the fixed core.
+  - CPU memory waits fell from 39% to 19.5% of clocks; about 107,000 of
+    138,000 TG68 cycles per frame took the fast read.
+  - At latency 16 the run took a different shot, so it is not a direct
+    comparison.
+- Hardware, MiSTer with HDMI capture at 60 Hz: the fixed core and
+  this build ran the same hole and inputs (virtual trackball over uinput).
+  Updates were counted as changed pixels in the game picture, with the
+  animated wind indicator masked.
+  - Fixed core: the 21-foot putt roll updated every sixth capture frame
+    (10 per second), and the approach's descent every 3-4 (15-20).
+  - This build: a 52-foot putt rolled at 30 updates per second, and three
+    approaches held 30 through flight and descent.
+  - The green-side camera did not trigger on hardware; it needs an approach
+    that finishes very close to the pin.
+  - The "Golden Tee" interlaced wipe between shots steps every fourth frame
+    on both builds. It is the game's transition, not a slowdown.
+- Remaining difference from MAME: the game keeps the last picture while it
+  builds a new view (the green-side camera cut, and the next address view
+  after each shot settles). MAME holds 28-34 frames for a new view and 13-16 on
+  the green. This build holds 37-40 and 21, and the fixed core 52-59 and 28.
+  Because of the swing difference above, the MAME and core shots are not the
+  same views. An earlier per-second count (12 against MAME's 19) depended on
+  where each hold fell against the one-second boundaries.
+  - During these holds the TG68 waits on memory for about 18% of all clocks.
+    About 8.6% is roughly 1,650 main-cache misses per frame. About 8.0% is
+    roughly 32,000 work-RAM accesses at two wait clocks each. The blitter is
+    busy 7.5%. Removing every wait would shorten a hold by at most a fifth.
+  - A MAME instruction-only trace (GT '97 green) misses 4.5 times per 1,000
+    instructions in the 4 KiB direct-mapped cache. Most core misses are
+    therefore probably ROM data reads evicting code. This is not yet confirmed.
+  - MAME's CPU timing is an approximation, so its hold lengths are a guide,
+    not a hardware reference.
+  - Real-cabinet check (2026-11-23): a public video of a Golden Tee 2K cabinet
+    (https://www.youtube.com/watch?v=35JQA8OojuE) starts a Coyote Run game.
+    The blue "Golden Tee" screen before hole 1 holds for about 78 frames,
+    from the screen appearing to the first wipe-out step. The video runs at
+    30 frames per second, so this is accurate to about 2 frames. The same
+    sequence was scripted in MAME and both builds of the core, using GT2K
+    v1.00 with empty NVRAM:
+
+    | Source | Hold (frames) | Longest flip gap |
+    |---|---|---|
+    | MAME 0.288 | 68 | 60-61 |
+    | This build | 72 | 65 |
+    | Real cabinet | about 78 | not measurable |
+    | Fixed core (5713acc) | 85 | 78 |
+
+    - The real board sits between the two builds. This build is about 6
+      frames (8%) quicker, and the fixed core is about 7 frames (9%) slower.
+    - MAME is about 13% quicker than the real board, which fits its lack of
+      CPU wait states.
+    - In MAME, eight runs with different tee distances (446-490 yards) all
+      gave a 60-61 frame flip gap, so the different hole-1 setup on the
+      cabinet (472 yards) should not matter.
+    - Changing the DDR latency in the simulation from 10 to 16 clocks gave the
+      same 72-frame hold.
+    - This is one event on one cabinet, so it is not yet enough to tune
+      memory wait times against.
+- Verification:
+  - New fast-read cases in the `tg68-bus-adapter` bench: window edges for all
+    three memory maps, byte and upper-address reads, misses, writes,
+    vectors, BloodStorm IACK, and the fast read taking fewer clocks than the
+    board path.
+  - New `main_fast_port` block in the `ddr-memory` bench: hits, tag and
+    index misses, no DDR traffic, back-to-back launches, unchanged front
+    latency, refusal during a front miss.
+  - `game-selector` checks the field. The full suite passes 107 runs across
+    58 testbenches. `scripts/check_source_tree.py` passes.
+- Quartus Prime Lite 17.0.2 (default seed): core clock `+0.337 ns`, HDMI scaler
+  `+0.343 ns`, all hold slack positive, TNS `0` at all four corners. The
+  worst core paths are inside the TG68 register file, not on the new path.
+  Utilization rose by 324 ALMs, with 451 RAM blocks unchanged. RBF SHA-256:
+  `058124D22373D36A7BD0E02911500C972B882976BFFC68BAB01985C4F3472B1D`.
 
 ## Reproduction
 

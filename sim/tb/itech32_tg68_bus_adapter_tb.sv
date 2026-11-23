@@ -37,6 +37,22 @@ module itech32_tg68_bus_adapter_tb;
 	logic [3:0] captured_be;
 	logic captured_we;
 
+	// Program-ROM fast-read port and a resident-line model of the main
+	// cache's fast port: a launch is registered, and the following cycle
+	// reports a hit for the address it launched while fast_resident is set.
+	logic rom_fast_enable = 1'b0;
+	logic [1:0] memory_map = itech32_profile_pkg::MAP_ITECH020;
+	logic rom_fast_launch;
+	logic [8:0] rom_fast_index;
+	logic [21:0] rom_fast_check_addr;
+	logic rom_fast_hit;
+	logic [31:0] rom_fast_rdata;
+	logic fast_launched_q = 1'b0;
+	logic [8:0] fast_index_q = 9'd0;
+	logic fast_resident = 1'b1;
+	integer fast_launch_count = 0;
+	integer cycle_clocks = 0;
+
 	always #5 clk = ~clk;
 
 	always_ff @(posedge clk) begin
@@ -85,8 +101,30 @@ module itech32_tg68_bus_adapter_tb;
 		.vector_load_wdata(vector_load_wdata), .vector_load_be(vector_load_be),
 		.board_req(board_req), .board_we(board_we), .board_addr(board_addr),
 		.board_wdata(board_wdata), .board_be(board_be),
-		.board_ack(board_ack), .board_rdata(board_rdata)
+		.board_ack(board_ack), .board_rdata(board_rdata),
+		.rom_fast_enable(rom_fast_enable), .memory_map(memory_map),
+		.rom_fast_launch(rom_fast_launch), .rom_fast_index(rom_fast_index),
+		.rom_fast_check_addr(rom_fast_check_addr),
+		.rom_fast_hit(rom_fast_hit), .rom_fast_rdata(rom_fast_rdata)
 	);
+
+	// Distinct contents per ROM dword, with different halfwords.
+	function automatic logic [31:0] rom_model(input logic [21:0] rom_offset);
+		rom_model = {rom_offset[17:2], ~rom_offset[17:2]};
+	endfunction
+
+	always_ff @(posedge clk) begin
+		fast_launched_q <= rom_fast_launch;
+		if (rom_fast_launch) begin
+			fast_index_q <= rom_fast_index;
+			fast_launch_count <= fast_launch_count + 1;
+			assert (rom_fast_enable && tg_busstate != 2'b11 && rom_fast_index == tg_addr[11:3])
+				else $fatal(1, "fast launch for a non-read, disabled port or wrong index");
+		end
+	end
+	assign rom_fast_hit = fast_launched_q && fast_resident &&
+		fast_index_q == rom_fast_check_addr[11:3];
+	assign rom_fast_rdata = rom_model(rom_fast_check_addr);
 
 	task automatic load_vector_dword(
 		input logic [4:0] index,
@@ -132,6 +170,7 @@ module itech32_tg68_bus_adapter_tb;
 				if (timeout > 100)
 					$fatal(1, "TG cycle timed out at %08x", address);
 			end while (!tg_clkena);
+			cycle_clocks = timeout;
 			#1 read_data = tg_rdata;
 			@(negedge clk);
 			tg_busstate = 2'b01;
@@ -215,8 +254,53 @@ module itech32_tg68_bus_adapter_tb;
 		end
 	endtask
 
+	// A read that must complete from the fast port: no board transaction and
+	// the model's halfword for the expected ROM offset.
+	task automatic expect_fast_read(
+		input logic [31:0] address,
+		input logic nuds,
+		input logic nlds,
+		input logic [21:0] rom_offset
+	);
+		logic [15:0] value;
+		integer count_before;
+		integer launches_before;
+		logic [31:0] dword;
+		begin
+			count_before = board_transaction_count;
+			launches_before = fast_launch_count;
+			tg_cycle(2'b10, address, 16'd0, nuds, nlds, value);
+			dword = rom_model(rom_offset);
+			if (board_transaction_count != count_before)
+				$fatal(1, "fast ROM read %08x reached the board bus", address);
+			if (fast_launch_count != launches_before + 1)
+				$fatal(1, "fast ROM read %08x launched %0d times", address,
+					fast_launch_count - launches_before);
+			if (value !== (address[1] ? dword[15:0] : dword[31:16]))
+				$fatal(1, "fast ROM read %08x got %04x expected %04x", address, value,
+					address[1] ? dword[15:0] : dword[31:16]);
+		end
+	endtask
+
+	// A read that must take the board path with the board's halfword.
+	task automatic expect_board_read(input logic [31:0] address);
+		logic [15:0] value;
+		integer count_before;
+		begin
+			count_before = board_transaction_count;
+			tg_cycle(2'b10, address, 16'd0, 1'b0, 1'b0, value);
+			if (board_transaction_count != count_before + 1 || captured_we ||
+			    captured_addr !== address[23:0])
+				$fatal(1, "read %08x did not take the board path (count %0d a=%06x)",
+					address, board_transaction_count - count_before, captured_addr);
+			if (value !== (address[1] ? board_rdata[15:0] : board_rdata[31:16]))
+				$fatal(1, "board read %08x got %04x", address, value);
+		end
+	endtask
+
 	logic [15:0] got;
 	integer before_count;
+	integer board_clocks;
 	initial begin
 		// Prove that the vector loader operates while reset is asserted.
 		load_vector_dword(5'd0, 32'h1122_3344, 4'hf);
@@ -283,8 +367,67 @@ module itech32_tg68_bus_adapter_tb;
 
 		if (!saw_ack_while_ce_low)
 			$fatal(1, "test never exercised board ack while cpu_ce was low");
+		if (fast_launch_count != 0)
+			$fatal(1, "disabled fast port launched %0d reads", fast_launch_count);
 
-		$display("PASS TG68-to-ITech32 adapter: reset shadow, stalls, byte lanes, local IACK");
+		// Program-ROM fast read, itech020 map (0x800000-0xbfffff, offset 21:0).
+		rom_fast_enable = 1'b1;
+		memory_map = itech32_profile_pkg::MAP_ITECH020;
+		expect_board_read(32'h0000_0100);
+		board_clocks = cycle_clocks;
+		expect_fast_read(32'h0080_1234, 1'b0, 1'b0, 22'h00_1234);
+		if (cycle_clocks >= board_clocks)
+			$fatal(1, "fast ROM read took %0d clocks, board read %0d", cycle_clocks, board_clocks);
+		expect_fast_read(32'h0080_1236, 1'b0, 1'b0, 22'h00_1236);
+		expect_fast_read(32'h00bf_fffe, 1'b0, 1'b0, 22'h3f_fffe);
+		expect_fast_read(32'h0080_0000, 1'b0, 1'b0, 22'h00_0000);
+		// Byte reads return the containing halfword, as on the board path.
+		expect_fast_read(32'h0081_0001, 1'b1, 1'b0, 22'h01_0001);
+		expect_fast_read(32'h0081_0002, 1'b0, 1'b1, 22'h01_0002);
+		// The upper TG68 address byte is not decoded (24-bit board bus).
+		expect_fast_read(32'h1280_4000, 1'b0, 1'b0, 22'h00_4000);
+		// Outside the window, writes, and misses use the board.
+		expect_board_read(32'h007f_fffe);
+		expect_board_read(32'h00c0_0000);
+		expect_board_write(32'h0080_2000, 16'h1234, 1'b0, 1'b0,
+			24'h802000, 32'h1234_0000, 4'b1100);
+		fast_resident = 1'b0;
+		expect_board_read(32'h0080_1234);
+		fast_resident = 1'b1;
+		// The vector shadow and CPU-space IACK keep their local paths.
+		before_count = board_transaction_count;
+		tg_cycle(2'b10, 32'h0000_0000, 16'd0, 1'b0, 1'b0, got);
+		if (got !== 16'h1122 || board_transaction_count != before_count)
+			$fatal(1, "vector read with fast port enabled %04x", got);
+
+		// Time Killers map: 0x100000-0x17ffff, offset {3'b0, addr[18:0]}.
+		memory_map = itech32_profile_pkg::MAP_TIMEKILL;
+		expect_fast_read(32'h0010_0000, 1'b0, 1'b0, 22'h00_0000);
+		expect_fast_read(32'h0017_fffe, 1'b0, 1'b0, 22'h07_fffe);
+		expect_board_read(32'h0018_0000);
+		expect_board_read(32'h0080_1234);
+
+		// BloodStorm map: addr[23], offset {3'b0, addr[18:0]}; IACK stays local.
+		memory_map = itech32_profile_pkg::MAP_BLOODSTORM;
+		expect_fast_read(32'h0080_0000, 1'b0, 1'b0, 22'h00_0000);
+		expect_fast_read(32'h00ff_fffe, 1'b0, 1'b0, 22'h07_fffe);
+		expect_board_read(32'h007f_fffe);
+		before_count = board_transaction_count;
+		tg_fc = 3'b111;
+		tg_cycle(2'b10, 32'hffff_fff4, 16'd0, 1'b0, 1'b0, got);
+		if (got !== 16'hffff || board_transaction_count != before_count)
+			$fatal(1, "BloodStorm IACK took the fast or board path");
+		tg_fc = 3'b101;
+
+		// Disabling the port restores the board path for ROM reads.
+		rom_fast_enable = 1'b0;
+		memory_map = itech32_profile_pkg::MAP_ITECH020;
+		before_count = fast_launch_count;
+		expect_board_read(32'h0080_1234);
+		if (fast_launch_count != before_count)
+			$fatal(1, "disabled fast port launched a read");
+
+		$display("PASS TG68-to-ITech32 adapter: reset shadow, stalls, byte lanes, local IACK, ROM fast read");
 		$finish;
 	end
 

@@ -129,6 +129,11 @@ module itech32_core
 	logic [21:0] main_addr;
 	logic main_ack;
 	logic [31:0] main_rdata;
+	logic main_fast_launch;
+	logic [8:0] main_fast_index;
+	logic [21:0] main_fast_check_addr;
+	logic main_fast_hit;
+	logic [31:0] main_fast_rdata;
 	logic grom_req;
 	logic [25:0] grom_addr;
 	logic grom_ack;
@@ -316,6 +321,11 @@ module itech32_core
 		.watchdog_strobe(watchdog_strobe),
 		.program_rom_req(main_req), .program_rom_addr(main_addr),
 		.program_rom_ack(main_ack), .program_rom_rdata(main_rdata),
+		.program_rom_fast_launch(main_fast_launch),
+		.program_rom_fast_index(main_fast_index),
+		.program_rom_fast_check_addr(main_fast_check_addr),
+		.program_rom_fast_hit(main_fast_hit),
+		.program_rom_fast_rdata(main_fast_rdata),
 		.grom_req(grom_req), .grom_addr(grom_addr),
 		.grom_ack(grom_ack), .grom_rdata(grom_rdata),
 		.vram_mem_req(vram_req), .vram_mem_we(vram_we),
@@ -399,6 +409,9 @@ module itech32_core
 		.vector_load_wdata(vector_load_wdata), .vector_load_be(vector_load_be),
 		.main_req(main_req), .main_addr(main_addr),
 		.main_ack(main_ack), .main_rdata(main_rdata),
+		.main_fast_launch(main_fast_launch), .main_fast_index(main_fast_index),
+		.main_fast_check_addr(main_fast_check_addr),
+		.main_fast_hit(main_fast_hit), .main_fast_rdata(main_fast_rdata),
 		.grom_req(grom_req), .grom_addr(grom_addr),
 		.grom_ack(grom_ack), .grom_rdata(grom_rdata),
 		.sound_req(sound_rom_req), .sound_addr(sound_rom_addr),

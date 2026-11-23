@@ -60,6 +60,12 @@ module itech32_ddr_memory
 	input  logic [21:0] main_addr,
 	output logic        main_ack,
 	output logic [31:0] main_rdata,
+	// CPU fast program-ROM read (itech32_ddr_main_cache fast_* port).
+	input  logic        main_fast_launch,
+	input  logic [8:0]  main_fast_index,
+	input  logic [21:0] main_fast_check_addr,
+	output logic        main_fast_hit,
+	output logic [31:0] main_fast_rdata,
 
 	input  logic        grom_req,
 	input  logic [25:0] grom_addr,
@@ -586,7 +592,10 @@ module itech32_ddr_memory
 		.refill_launch(main_refill_launch), .refill_set(main_prefetch_set_q),
 		.refill_beat(main_prefetch_beat), .refill_write(main_refill_write),
 		.refill_data(DDRAM_DOUT), .refill_publish(main_refill_publish),
-		.refill_tag(main_prefetch_tag_q)
+		.refill_tag(main_prefetch_tag_q),
+		.fast_launch(main_fast_launch), .fast_index(main_fast_index),
+		.fast_check_addr(main_fast_check_addr),
+		.fast_hit(main_fast_hit), .fast_rdata(main_fast_rdata)
 	);
 
 	itech32_ddr_grom_cache grom_cache (

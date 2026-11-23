@@ -60,6 +60,13 @@ module itech32_board
 	output logic [21:0] program_rom_addr,
 	input  logic        program_rom_ack,
 	input  logic [31:0] program_rom_rdata,
+	// The CPU's direct program-ROM read of resident main-cache lines
+	// (itech32_tg68_bus_adapter / itech32_ddr_main_cache fast port).
+	output logic        program_rom_fast_launch,
+	output logic [8:0]  program_rom_fast_index,
+	output logic [21:0] program_rom_fast_check_addr,
+	input  logic        program_rom_fast_hit,
+	input  logic [31:0] program_rom_fast_rdata,
 
 	output logic        grom_req,
 	output logic [25:0] grom_addr,
@@ -283,6 +290,13 @@ module itech32_board
 		.board_req(cpu_req), .board_we(cpu_we), .board_addr(cpu_addr),
 		.board_wdata(cpu_wdata), .board_be(cpu_be),
 		.board_ack(cpu_ack), .board_rdata(cpu_rdata),
+		.rom_fast_enable(profile.cpu_rom_fast_read),
+		.memory_map(profile.memory_map),
+		.rom_fast_launch(program_rom_fast_launch),
+		.rom_fast_index(program_rom_fast_index),
+		.rom_fast_check_addr(program_rom_fast_check_addr),
+		.rom_fast_hit(program_rom_fast_hit),
+		.rom_fast_rdata(program_rom_fast_rdata),
 		.debug_addr(debug_cpu_addr), .debug_busstate(debug_cpu_busstate),
 		.debug_nwr(debug_nwr), .debug_nuds(debug_nuds), .debug_nlds(debug_nlds),
 		.debug_fc(debug_fc)
